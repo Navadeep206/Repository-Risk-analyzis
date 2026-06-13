@@ -1,0 +1,5 @@
+method,avg_loro_macro_f1
+Global StandardScaler,0.49867562946138344
+Repo-specific StandardScaler,0.5198131783512817
+Repo-specific RobustScaler,0.543030022066171
+Quantile Normalization,0.5085489074845434

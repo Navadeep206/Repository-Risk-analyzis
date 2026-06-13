@@ -1,0 +1,84 @@
+file_path,language,predicted_label,confidence,trust_decision,trust_reason
+tests/test_basic.py,python,HIGH,0.9967353293888692,TRUSTED,High-confidence HIGH prediction (99.7%)
+tests/conftest.py,python,HIGH,0.5375218046408675,FLAGGED,Low confidence (53.8%) — manual review required
+tests/test_converters.py,python,MEDIUM,0.5776393147729315,FLAGGED,Low confidence (57.8%) — manual review required
+tests/test_logging.py,python,MEDIUM,0.521832230126214,FLAGGED,Low confidence (52.2%) — manual review required
+tests/test_signals.py,python,HIGH,0.6709614053910795,FLAGGED,Low confidence (67.1%) — manual review required
+tests/test_request.py,python,MEDIUM,0.6204496526510802,FLAGGED,Low confidence (62.0%) — manual review required
+tests/test_async.py,python,MEDIUM,0.6188443002500823,FLAGGED,Low confidence (61.9%) — manual review required
+tests/test_session_interface.py,python,MEDIUM,0.5531516666521092,FLAGGED,Low confidence (55.3%) — manual review required
+tests/test_instance_config.py,python,MEDIUM,0.5356372956155305,FLAGGED,Low confidence (53.6%) — manual review required
+tests/test_views.py,python,HIGH,0.6390570506395793,FLAGGED,Low confidence (63.9%) — manual review required
+tests/test_json_tag.py,python,MEDIUM,0.5740393045954107,FLAGGED,Low confidence (57.4%) — manual review required
+tests/test_subclassing.py,python,MEDIUM,0.5903210990108861,FLAGGED,Low confidence (59.0%) — manual review required
+tests/test_reqctx.py,python,HIGH,0.8588370901900294,TRUSTED,High-confidence HIGH prediction (85.9%)
+tests/test_blueprints.py,python,HIGH,0.9975045601581001,TRUSTED,High-confidence HIGH prediction (99.8%)
+tests/test_config.py,python,HIGH,0.8715706760486153,TRUSTED,High-confidence HIGH prediction (87.2%)
+tests/test_user_error_handler.py,python,HIGH,0.6107949405106442,FLAGGED,Low confidence (61.1%) — manual review required
+tests/test_helpers.py,python,HIGH,0.9464964659239028,TRUSTED,High-confidence HIGH prediction (94.6%)
+tests/test_json.py,python,HIGH,0.43108487119632166,FLAGGED,Low confidence (43.1%) — manual review required
+tests/test_cli.py,python,HIGH,0.9967353293888692,TRUSTED,High-confidence HIGH prediction (99.7%)
+tests/test_templating.py,python,HIGH,0.9944427713180092,TRUSTED,High-confidence HIGH prediction (99.4%)
+tests/test_appctx.py,python,HIGH,0.8669345829750221,TRUSTED,High-confidence HIGH prediction (86.7%)
+tests/test_regression.py,python,HIGH,0.49421221841959917,FLAGGED,Low confidence (49.4%) — manual review required
+tests/test_testing.py,python,HIGH,0.9565183190707559,TRUSTED,High-confidence HIGH prediction (95.7%)
+tests/test_apps/blueprintapp/__init__.py,python,MEDIUM,0.5330916050259548,FLAGGED,Low confidence (53.3%) — manual review required
+tests/test_apps/blueprintapp/apps/__init__.py,python,LOW,0.49912822966158255,FLAGGED,Low confidence (49.9%) — manual review required
+tests/test_apps/blueprintapp/apps/frontend/__init__.py,python,MEDIUM,0.6309370688594236,FLAGGED,Low confidence (63.1%) — manual review required
+tests/test_apps/blueprintapp/apps/admin/__init__.py,python,MEDIUM,0.6349886022445168,FLAGGED,Low confidence (63.5%) — manual review required
+tests/test_apps/helloworld/hello.py,python,MEDIUM,0.6498831353986041,FLAGGED,Low confidence (65.0%) — manual review required
+tests/test_apps/helloworld/wsgi.py,python,MEDIUM,0.611410179324687,FLAGGED,Low confidence (61.1%) — manual review required
+tests/test_apps/subdomaintestmodule/__init__.py,python,MEDIUM,0.5284268178520214,FLAGGED,Low confidence (52.8%) — manual review required
+tests/test_apps/cliapp/importerrorapp.py,python,MEDIUM,0.5242999383592882,FLAGGED,Low confidence (52.4%) — manual review required
+tests/test_apps/cliapp/__init__.py,python,LOW,0.49912822966158255,FLAGGED,Low confidence (49.9%) — manual review required
+tests/test_apps/cliapp/factory.py,python,MEDIUM,0.5425320700981504,FLAGGED,Low confidence (54.3%) — manual review required
+tests/test_apps/cliapp/multiapp.py,python,MEDIUM,0.530102493527697,FLAGGED,Low confidence (53.0%) — manual review required
+tests/test_apps/cliapp/app.py,python,MEDIUM,0.5284268178520214,FLAGGED,Low confidence (52.8%) — manual review required
+tests/test_apps/cliapp/inner1/__init__.py,python,MEDIUM,0.5507162615846688,FLAGGED,Low confidence (55.1%) — manual review required
+tests/test_apps/cliapp/inner1/inner2/flask.py,python,MEDIUM,0.5507162615846688,FLAGGED,Low confidence (55.1%) — manual review required
+tests/test_apps/cliapp/inner1/inner2/__init__.py,python,LOW,0.49912822966158255,FLAGGED,Low confidence (49.9%) — manual review required
+tests/type_check/typing_route.py,python,MEDIUM,0.5045938359964207,FLAGGED,Low confidence (50.5%) — manual review required
+tests/type_check/typing_app_decorators.py,python,MEDIUM,0.5372061793377777,FLAGGED,Low confidence (53.7%) — manual review required
+tests/type_check/typing_error_handler.py,python,MEDIUM,0.5344115538852575,FLAGGED,Low confidence (53.4%) — manual review required
+docs/conf.py,python,HIGH,0.6686513894013854,FLAGGED,Low confidence (66.9%) — manual review required
+examples/tutorial/tests/conftest.py,python,MEDIUM,0.577992749652581,FLAGGED,Low confidence (57.8%) — manual review required
+examples/tutorial/tests/test_auth.py,python,MEDIUM,0.45392709508319196,FLAGGED,Low confidence (45.4%) — manual review required
+examples/tutorial/tests/test_db.py,python,MEDIUM,0.44168209667585023,FLAGGED,Low confidence (44.2%) — manual review required
+examples/tutorial/tests/test_factory.py,python,MEDIUM,0.6293593053965455,FLAGGED,Low confidence (62.9%) — manual review required
+examples/tutorial/tests/test_blog.py,python,MEDIUM,0.5566430814200921,FLAGGED,Low confidence (55.7%) — manual review required
+examples/tutorial/flaskr/auth.py,python,MEDIUM,0.5834417319509915,FLAGGED,Low confidence (58.3%) — manual review required
+examples/tutorial/flaskr/db.py,python,MEDIUM,0.4430693158632896,FLAGGED,Low confidence (44.3%) — manual review required
+examples/tutorial/flaskr/__init__.py,python,MEDIUM,0.43573924532901265,FLAGGED,Low confidence (43.6%) — manual review required
+examples/tutorial/flaskr/blog.py,python,MEDIUM,0.5459085897361757,FLAGGED,Low confidence (54.6%) — manual review required
+examples/celery/make_celery.py,python,MEDIUM,0.555010984879392,FLAGGED,Low confidence (55.5%) — manual review required
+examples/celery/src/task_app/tasks.py,python,MEDIUM,0.5319018610305192,FLAGGED,Low confidence (53.2%) — manual review required
+examples/celery/src/task_app/__init__.py,python,MEDIUM,0.5804629445910848,FLAGGED,Low confidence (58.0%) — manual review required
+examples/celery/src/task_app/views.py,python,MEDIUM,0.5235811793377778,FLAGGED,Low confidence (52.4%) — manual review required
+examples/javascript/js_example/__init__.py,python,MEDIUM,0.5290822157426914,FLAGGED,Low confidence (52.9%) — manual review required
+examples/javascript/js_example/views.py,python,MEDIUM,0.5421047389549256,FLAGGED,Low confidence (54.2%) — manual review required
+examples/javascript/tests/test_js_example.py,python,HIGH,0.4423363364281186,FLAGGED,Low confidence (44.2%) — manual review required
+examples/javascript/tests/conftest.py,python,MEDIUM,0.6547922282844166,FLAGGED,Low confidence (65.5%) — manual review required
+src/flask/logging.py,python,MEDIUM,0.6189256198920166,FLAGGED,Low confidence (61.9%) — manual review required
+src/flask/signals.py,python,MEDIUM,0.5658303344569334,FLAGGED,Low confidence (56.6%) — manual review required
+src/flask/sessions.py,python,HIGH,0.6105719903994336,FLAGGED,Low confidence (61.1%) — manual review required
+src/flask/config.py,python,HIGH,0.4945107667291945,FLAGGED,Low confidence (49.5%) — manual review required
+src/flask/templating.py,python,MEDIUM,0.582838237600647,FLAGGED,Low confidence (58.3%) — manual review required
+src/flask/globals.py,python,MEDIUM,0.6033945074186418,FLAGGED,Low confidence (60.3%) — manual review required
+src/flask/__init__.py,python,HIGH,0.5726196897752128,FLAGGED,Low confidence (57.3%) — manual review required
+src/flask/blueprints.py,python,HIGH,0.6652142853177293,FLAGGED,Low confidence (66.5%) — manual review required
+src/flask/cli.py,python,HIGH,0.9967353293888692,TRUSTED,High-confidence HIGH prediction (99.7%)
+src/flask/wrappers.py,python,MEDIUM,0.5516932098855314,FLAGGED,Low confidence (55.2%) — manual review required
+src/flask/app.py,python,HIGH,0.8994933239552165,TRUSTED,High-confidence HIGH prediction (89.9%)
+src/flask/debughelpers.py,python,MEDIUM,0.5935535554848328,FLAGGED,Low confidence (59.4%) — manual review required
+src/flask/ctx.py,python,HIGH,0.6634003060788523,FLAGGED,Low confidence (66.3%) — manual review required
+src/flask/typing.py,python,HIGH,0.5944720132220092,FLAGGED,Low confidence (59.4%) — manual review required
+src/flask/testing.py,python,HIGH,0.48936995483209034,FLAGGED,Low confidence (48.9%) — manual review required
+src/flask/helpers.py,python,HIGH,0.9044290036230828,TRUSTED,High-confidence HIGH prediction (90.4%)
+src/flask/__main__.py,python,MEDIUM,0.5365017781622538,FLAGGED,Low confidence (53.7%) — manual review required
+src/flask/views.py,python,MEDIUM,0.5804793080036742,FLAGGED,Low confidence (58.0%) — manual review required
+src/flask/sansio/blueprints.py,python,MEDIUM,0.47087546854745527,FLAGGED,Low confidence (47.1%) — manual review required
+src/flask/sansio/app.py,python,HIGH,0.5769516695856657,FLAGGED,Low confidence (57.7%) — manual review required
+src/flask/sansio/scaffold.py,python,MEDIUM,0.4448910557500901,FLAGGED,Low confidence (44.5%) — manual review required
+src/flask/json/provider.py,python,MEDIUM,0.6078563195403492,FLAGGED,Low confidence (60.8%) — manual review required
+src/flask/json/__init__.py,python,HIGH,0.5287793150592298,FLAGGED,Low confidence (52.9%) — manual review required
+src/flask/json/tag.py,python,MEDIUM,0.5829026331648164,FLAGGED,Low confidence (58.3%) — manual review required
