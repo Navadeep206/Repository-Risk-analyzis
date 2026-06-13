@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+*.py[cod]
+*$py.class
+*.so
+
+# Environments
+.env
+.venv/
+venv/
+env/
+ENV/
+
+# OS
+.DS_Store
+
+# IDEs
+.vscode/
+.idea/
+
+# Project Data & Repositories
+data/repositories/
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep

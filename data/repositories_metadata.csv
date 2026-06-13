@@ -1,0 +1,8 @@
+repository_name,repository_language,repository_size,repository_age,total_commits,total_contributors
+click,python,26641,1,3242,467
+jinja,python,22875,1,2949,341
+express,javascript,15802,1,6146,386
+redux,javascript,9142,1,4166,1076
+axios,javascript,26603,1,2084,642
+lodash,javascript,66372,1,7701,271
+databases,python,4551,1,335,62

@@ -1,0 +1,11 @@
+repository_name,file_path,language,loc,complexity,maintainability_index,commit_count,modification_count,contributor_count,commit_frequency,repository_age_days,risk_score,risk_label
+JOBPORTAL,job-portal-mern/server/app.js,javascript,44,6,-1.0,3,3,2,0.375,8,40.0,MEDIUM
+JOBPORTAL,job-portal-mern/client/src/pages/dashboard/PostJob.jsx,javascript,170,21,-1.0,4,4,2,0.5,8,67.0,MEDIUM
+JOBPORTAL,job-portal-mern/client/src/pages/auth/Register.jsx,javascript,156,20,-1.0,4,4,2,0.5,8,67.0,MEDIUM
+JOBPORTAL,job-portal-mern/server/config/db.js,javascript,16,2,-1.0,1,1,1,0.125,8,23.33,LOW
+JOBPORTAL,job-portal-mern/client/tailwind.config.js,javascript,103,1,-1.0,4,4,2,0.5,8,29.67,LOW
+JOBPORTAL,job-portal-mern/server/controllers/adminController.js,javascript,77,9,-1.0,1,1,1,0.125,8,42.0,MEDIUM
+JOBPORTAL,job-portal-mern/client/src/components/ui/Button.jsx,javascript,45,4,-1.0,3,3,1,0.375,8,34.67,MEDIUM
+JOBPORTAL,job-portal-mern/server/models/Log.js,javascript,7,1,-1.0,1,1,1,0.125,8,20.67,LOW
+JOBPORTAL,job-portal-mern/client/src/pages/dashboard/UserDashboard.jsx,javascript,142,20,-1.0,4,4,2,0.5,8,67.0,MEDIUM
+JOBPORTAL,job-portal-mern/client/src/pages/dashboard/AdminDashboard.jsx,javascript,171,20,-1.0,3,3,2,0.375,8,64.0,MEDIUM
