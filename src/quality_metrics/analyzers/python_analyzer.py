@@ -29,46 +29,74 @@ class PythonAnalyzer(BaseAnalyzer):
         Returns:
             A pandas DataFrame matching the unified schema.
         """
+        import signal
+        
+        class TimeoutException(Exception):
+            pass
+            
+        def timeout_handler(signum, frame):
+            raise TimeoutException("File analysis timed out after 2 seconds")
+            
         repo_name = os.path.basename(target_dir.rstrip("/"))
         records = []
         
-        for file_path in files:
-            try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    content = f.read()
+        # Register the signal handler for timeout
+        old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+        
+        try:
+            for file_path in files:
+                try:
+                    # 0. Skip files larger than 1MB to prevent performance degradation
+                    if os.path.getsize(file_path) > 1024 * 1024:
+                        print(f"[-] Warning: Skipping {file_path} because it is larger than 1MB")
+                        continue
+                        
+                    # Set alarm for 2 seconds
+                    signal.alarm(2)
                     
-                # 1. LOC
-                raw_metrics = radon.raw.analyze(content)
-                loc = raw_metrics.loc
-                
-                # 2. Complexity
-                blocks = radon.complexity.cc_visit(content)
-                top_level_cc = 0
-                for block in blocks:
-                    block_type = type(block).__name__
-                    if block_type == "Class":
-                        top_level_cc += block.complexity
-                    elif block_type == "Function" and getattr(block, "classname", None) is None:
-                        top_level_cc += block.complexity
-                if top_level_cc == 0:
-                    top_level_cc = 1
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        content = f.read()
+                        
+                    # 1. LOC
+                    raw_metrics = radon.raw.analyze(content)
+                    loc = raw_metrics.loc
                     
-                # 3. Maintainability Index
-                mi_value = radon.metrics.mi_visit(content, multi=True)
-                
-                rel_path = os.path.relpath(file_path, target_dir)
-                records.append({
-                    "repository_name": repo_name,
-                    "file_path": rel_path,
-                    "language": "python",
-                    "loc": loc,
-                    "complexity": top_level_cc,
-                    "warnings": 0,
-                    "errors": 0,
-                    "maintainability_index": mi_value
-                })
-            except Exception as e:
-                print(f"[-] Warning: Python analyzer failed to process {file_path}: {e}")
+                    # 2. Complexity
+                    blocks = radon.complexity.cc_visit(content)
+                    top_level_cc = 0
+                    for block in blocks:
+                        block_type = type(block).__name__
+                        if block_type == "Class":
+                            top_level_cc += block.complexity
+                        elif block_type == "Function" and getattr(block, "classname", None) is None:
+                            top_level_cc += block.complexity
+                    if top_level_cc == 0:
+                        top_level_cc = 1
+                        
+                    # 3. Maintainability Index
+                    mi_value = radon.metrics.mi_visit(content, multi=True)
+                    
+                    # Disable alarm
+                    signal.alarm(0)
+                    
+                    rel_path = os.path.relpath(file_path, target_dir)
+                    records.append({
+                        "repository_name": repo_name,
+                        "file_path": rel_path,
+                        "language": "python",
+                        "loc": loc,
+                        "complexity": top_level_cc,
+                        "warnings": 0,
+                        "errors": 0,
+                        "maintainability_index": mi_value
+                    })
+                except Exception as e:
+                    signal.alarm(0)  # Make sure alarm is disabled
+                    print(f"[-] Warning: Python analyzer failed to process {file_path}: {e}")
+        finally:
+            # Restore original signal handler and cancel any active alarm
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old_handler)
                 
         df = pd.DataFrame(records)
         if df.empty:
@@ -83,3 +111,4 @@ class PythonAnalyzer(BaseAnalyzer):
         df.to_csv(output_file, index=False)
         print(f"[+] Python metrics saved to {output_file}. Processed {len(df)} files.")
         return df
+
