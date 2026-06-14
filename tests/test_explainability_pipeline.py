@@ -66,8 +66,8 @@ class TestExplainabilityPipeline(unittest.TestCase):
         for col in expected_cols:
             self.assertIn(col, df.columns, f"Column {col} is missing from global rankings.")
             
-        # Verify it has exactly 11 features
-        self.assertEqual(len(df), 11, "Global rankings should have exactly 11 features.")
+        # Verify it has exactly 18 features (14 numeric + 4 categorical)
+        self.assertEqual(len(df), 18, "Global rankings should have exactly 18 features.")
         
         # Verify it is sorted by average_rank in ascending order
         self.assertTrue(df["average_rank"].is_monotonic_increasing, "Global rankings are not sorted by average rank.")

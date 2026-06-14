@@ -6,13 +6,13 @@ This report provides a statistical breakdown and structural audit of the generat
 
 | Metric | Value |
 |--------|-------|
-| **Total Files Embedded** | 723 |
+| **Total Files Embedded** | 575 |
 | **Embedding Dimension** | 768 (Expected: 768) |
-| **NumPy Array Disk Size** | 2.12 MB |
-| **Mean L2 Norm** | 18.1314 |
-| **L2 Norm Std Dev** | 0.5298 |
-| **Min L2 Norm** | 17.0008 |
-| **Max L2 Norm** | 19.9525 |
+| **NumPy Array Disk Size** | 1.68 MB |
+| **Mean L2 Norm** | 19.2757 |
+| **L2 Norm Std Dev** | 0.2179 |
+| **Min L2 Norm** | 18.8319 |
+| **Max L2 Norm** | 19.4995 |
 
 ---
 
@@ -20,13 +20,29 @@ This report provides a statistical breakdown and structural audit of the generat
 
 | Repository | Count | Percentage |
 |------------|-------|------------|
-| axios | 198 | 27.39% |
-| redux | 193 | 26.69% |
-| express | 141 | 19.50% |
-| click | 63 | 8.71% |
-| jinja | 60 | 8.30% |
-| lodash | 44 | 6.09% |
-| databases | 24 | 3.32% |
+| lodash | 25 | 4.35% |
+| databases | 25 | 4.35% |
+| svelte | 25 | 4.35% |
+| pytest | 25 | 4.35% |
+| express | 25 | 4.35% |
+| jinja | 25 | 4.35% |
+| prisma | 25 | 4.35% |
+| click | 25 | 4.35% |
+| requests | 25 | 4.35% |
+| ansible | 25 | 4.35% |
+| airflow | 25 | 4.35% |
+| fastapi | 25 | 4.35% |
+| great_expectations | 25 | 4.35% |
+| localstack | 25 | 4.35% |
+| prefect | 25 | 4.35% |
+| pytorch | 25 | 4.35% |
+| django | 25 | 4.35% |
+| redux | 25 | 4.35% |
+| axios | 25 | 4.35% |
+| ray | 25 | 4.35% |
+| elasticsearch | 25 | 4.35% |
+| scikit-learn | 25 | 4.35% |
+| pandas | 25 | 4.35% |
 
 ---
 
@@ -34,9 +50,9 @@ This report provides a statistical breakdown and structural audit of the generat
 
 | Language | Count | Percentage |
 |----------|-------|------------|
-| javascript | 500 | 69.16% |
-| python | 147 | 20.33% |
-| typescript | 76 | 10.51% |
+| python | 425 | 73.91% |
+| typescript | 100 | 17.39% |
+| javascript | 50 | 8.70% |
 
 ---
 

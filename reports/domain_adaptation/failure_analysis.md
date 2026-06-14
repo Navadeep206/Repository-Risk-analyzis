@@ -4,16 +4,16 @@ This report diagnoses remaining failure modes of risk intelligence predictions a
 
 ## 1. Remaining Generalization Performance Gaps
 
-- **Easiest Repository under Adaptation**: `jinja` (Avg LORO Macro F1 = **0.5741**)
-- **Hardest Repository under Adaptation**: `redux` (Avg LORO Macro F1 = **0.3634**)
-- **Best Strategy for the Hardest Repository**: `CORAL XGBoost` (Macro F1 = **0.4317**)
+- **Easiest Repository under Adaptation**: `svelte` (Avg LORO Macro F1 = **0.1765**)
+- **Hardest Repository under Adaptation**: `airflow` (Avg LORO Macro F1 = **0.1765**)
+- **Best Strategy for the Hardest Repository**: `Baseline RF` (Macro F1 = **0.1765**)
 
 ---
 
-## 2. Diagnostics: Why `redux` Remains Challenging
+## 2. Diagnostics: Why `airflow` Remains Challenging
 
-1. **Extreme Covariate Shift Severity**: As analyzed in Phase 11, features like `repository_age_days` and `commit_frequency` are highly skewed. `redux` represents an outlier in developmental activity scale, which simple correlation alignment (CORAL) cannot perfectly linearize.
-2. **Codebase Specific Patterns**: Under LORO evaluation, when `redux` is held out, the model is trained entirely on codebases that may not capture its specific coding patterns or developer structures. This is particularly noticeable in frameworks that use highly asynchronous or complex class inheritance structures that differ from standard templates.
+1. **Extreme Covariate Shift Severity**: As analyzed in Phase 11, features like `repository_age_days` and `commit_frequency` are highly skewed. `airflow` represents an outlier in developmental activity scale, which simple correlation alignment (CORAL) cannot perfectly linearize.
+2. **Codebase Specific Patterns**: Under LORO evaluation, when `airflow` is held out, the model is trained entirely on codebases that may not capture its specific coding patterns or developer structures. This is particularly noticeable in frameworks that use highly asynchronous or complex class inheritance structures that differ from standard templates.
 
 ---
 

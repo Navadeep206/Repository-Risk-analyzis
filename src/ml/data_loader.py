@@ -44,7 +44,7 @@ def load_split_data(split_name: str) -> Tuple[pd.DataFrame, pd.Series]:
     y = df["historical_risk_label"].map(LABEL_MAP)
     
     # Features (exclude metadata columns and target)
-    exclude_cols = ["repository_name", "file_path", "historical_risk_label"]
+    exclude_cols = ["file_path", "historical_risk_label"]
     feature_cols = [col for col in df.columns if col not in exclude_cols]
     
     X = df[feature_cols].copy()

@@ -35,8 +35,9 @@ def run_error_analysis() -> None:
     # Load and run Hybrid predictions on CPU
     device = torch.device("cpu")
     _, _, test_loader, _ = get_hybrid_dataloaders(batch_size=32)
+    tabular_dim = test_loader.dataset.X_tabular.shape[1]
     hybrid_model_path = os.path.join(BASE_DIR, "models", "hybrid_risk_predictor.pt")
-    hybrid_model = HybridRiskPredictor()
+    hybrid_model = HybridRiskPredictor(tabular_dim=tabular_dim)
     hybrid_model.load_state_dict(torch.load(hybrid_model_path, map_location=device))
     hybrid_model.to(device)
     hybrid_model.eval()
@@ -113,7 +114,9 @@ def run_error_analysis() -> None:
         f.write("| Raw Metric | Average (Correct) | Average (Incorrect) |\n")
         f.write("|------------|-------------------|---------------------|\n")
         for idx, row in feature_comparison.iterrows():
-            f.write(f"| {idx:<25} | {row[True]:>17.3f} | {row[False]:>19.3f} |\n")
+            correct_val = row[True] if True in row.index else 0.0
+            incorrect_val = row[False] if False in row.index else 0.0
+            f.write(f"| {idx:<25} | {correct_val:>17.3f} | {incorrect_val:>19.3f} |\n")
         f.write("\n")
         
     print(f"[+] Saved error analysis report to {md_path}")

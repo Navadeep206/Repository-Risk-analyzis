@@ -102,8 +102,9 @@ def generate_explainability_plots() -> None:
     # Run hybrid on CPU
     device = torch.device("cpu")
     _, _, test_loader, _ = get_hybrid_dataloaders(batch_size=32)
+    tabular_dim = test_loader.dataset.X_tabular.shape[1]
     hybrid_model_path = os.path.join(BASE_DIR, "models", "hybrid_risk_predictor.pt")
-    hybrid_model = HybridRiskPredictor()
+    hybrid_model = HybridRiskPredictor(tabular_dim=tabular_dim)
     hybrid_model.load_state_dict(torch.load(hybrid_model_path, map_location=device))
     hybrid_model.to(device)
     hybrid_model.eval()

@@ -43,7 +43,9 @@ def evaluate_models() -> None:
         "Logistic Regression": "logistic_regression.pkl",
         "Decision Tree": "decision_tree.pkl",
         "Random Forest": "random_forest.pkl",
-        "XGBoost": "xgboost.pkl"
+        "XGBoost": "xgboost.pkl",
+        "LightGBM": "lightgbm.pkl",
+        "CatBoost": "catboost.pkl"
     }
     
     evaluation_results: Dict[str, Dict[str, Any]] = {}

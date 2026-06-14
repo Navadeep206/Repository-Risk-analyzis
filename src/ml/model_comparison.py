@@ -6,6 +6,8 @@ Saves comparison to reports/model_comparison.csv and reports/cross_validation_re
 """
 
 import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
 import pickle
 import sys
 import pandas as pd
@@ -17,6 +19,8 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier
 from xgboost import XGBClassifier
+from lightgbm import LGBMClassifier
+from catboost import CatBoostClassifier
 
 # Ensure parent directory is in path for imports
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -90,6 +94,26 @@ def perform_model_comparison() -> None:
         # Defaults if not trained yet
         models["XGBoost"] = XGBClassifier(
             learning_rate=0.1, max_depth=5, n_estimators=100, random_state=42, eval_metric="mlogloss"
+        )
+        
+    # 5. LightGBM
+    lgb_path = os.path.join(models_dir, "lightgbm.pkl")
+    if os.path.exists(lgb_path):
+        with open(lgb_path, "rb") as f:
+            models["LightGBM"] = pickle.load(f)
+    else:
+        models["LightGBM"] = LGBMClassifier(
+            learning_rate=0.05, max_depth=5, n_estimators=100, random_state=42, verbosity=-1
+        )
+        
+    # 6. CatBoost
+    cb_path = os.path.join(models_dir, "catboost.pkl")
+    if os.path.exists(cb_path):
+        with open(cb_path, "rb") as f:
+            models["CatBoost"] = pickle.load(f)
+    else:
+        models["CatBoost"] = CatBoostClassifier(
+            learning_rate=0.05, depth=6, iterations=100, random_seed=42, verbose=0
         )
         
     cv_records: List[Dict[str, Any]] = []

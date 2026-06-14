@@ -43,7 +43,10 @@ def get_files_by_language(target_dir: str) -> Dict[str, List[str]]:
         "javascript": [],
         "typescript": []
     }
-    ignored_dirs = {".venv", "venv", "node_modules", ".git", "__pycache__", "dist", "build"}
+    ignored_dirs = {
+        ".venv", "venv", "node_modules", ".git", "__pycache__", "dist", "build",
+        "vendor", "third_party", "extern", "fixtures", "test_fixtures", "tests/fixtures"
+    }
     
     for root, dirs, files in os.walk(target_dir):
         dirs[:] = [d for d in dirs if d not in ignored_dirs]

@@ -17,6 +17,8 @@ from ml.train_logistic_regression import train_logistic_regression
 from ml.train_decision_tree import train_decision_tree
 from ml.train_random_forest import train_random_forest
 from ml.train_xgboost import train_xgboost
+from ml.train_lightgbm import train_lightgbm
+from ml.train_catboost import train_catboost
 from ml.evaluate_models import evaluate_models
 from ml.feature_importance import extract_feature_importance
 from ml.model_comparison import perform_model_comparison
@@ -71,6 +73,16 @@ def run_pipeline() -> None:
     print("\n[*] Training XGBoost Baseline (with Tuning)...")
     xgb_path = os.path.join(models_dir, "xgboost.pkl")
     train_xgboost(X_train_proc, y_train, xgb_path)
+    
+    # 7.5 Train LightGBM
+    print("\n[*] Training LightGBM Baseline (with Tuning)...")
+    lgb_path = os.path.join(models_dir, "lightgbm.pkl")
+    train_lightgbm(X_train_proc, y_train, lgb_path)
+    
+    # 7.6 Train CatBoost
+    print("\n[*] Training CatBoost Baseline (with Tuning)...")
+    cb_path = os.path.join(models_dir, "catboost.pkl")
+    train_catboost(X_train_proc, y_train, cb_path)
     
     # 8. Evaluate Models
     print("\n[*] Evaluating all trained models...")

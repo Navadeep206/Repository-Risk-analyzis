@@ -29,7 +29,23 @@ TARGET_REPOSITORIES = [
     {"name": "redux", "url": "https://github.com/reduxjs/redux", "lang": "typescript"},
     {"name": "axios", "url": "https://github.com/axios/axios", "lang": "typescript"},
     {"name": "lodash", "url": "https://github.com/lodash/lodash", "lang": "javascript"},
-    {"name": "databases", "url": "https://github.com/encode/databases", "lang": "python"}
+    {"name": "databases", "url": "https://github.com/encode/databases", "lang": "python"},
+    {"name": "fastapi", "url": "https://github.com/tiangolo/fastapi", "lang": "python"},
+    {"name": "svelte", "url": "https://github.com/sveltejs/svelte", "lang": "typescript"},
+    {"name": "prisma", "url": "https://github.com/prisma/prisma", "lang": "typescript"},
+    {"name": "localstack", "url": "https://github.com/localstack/localstack", "lang": "python"},
+    {"name": "scikit-learn", "url": "https://github.com/scikit-learn/scikit-learn", "lang": "python"},
+    {"name": "requests", "url": "https://github.com/psf/requests", "lang": "python"},
+    {"name": "airflow", "url": "https://github.com/apache/airflow", "lang": "python"},
+    {"name": "django", "url": "https://github.com/django/django", "lang": "python"},
+    {"name": "pytorch", "url": "https://github.com/pytorch/pytorch", "lang": "python"},
+    {"name": "pandas", "url": "https://github.com/pandas-dev/pandas", "lang": "python"},
+    {"name": "ansible", "url": "https://github.com/ansible/ansible", "lang": "python"},
+    {"name": "ray", "url": "https://github.com/ray-project/ray", "lang": "python"},
+    {"name": "elasticsearch", "url": "https://github.com/elastic/elasticsearch", "lang": "java"},
+    {"name": "pytest", "url": "https://github.com/pytest-dev/pytest", "lang": "python"},
+    {"name": "prefect", "url": "https://github.com/PrefectHQ/prefect", "lang": "python"},
+    {"name": "great_expectations", "url": "https://github.com/great-expectations/great_expectations", "lang": "python"}
 ]
 
 def mine_all_repositories() -> None:

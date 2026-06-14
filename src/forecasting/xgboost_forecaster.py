@@ -5,6 +5,9 @@ Implements the XGBoost Regressor model for time-series forecasting.
 Includes native JSON serialization to avoid pickle segmentation faults.
 """
 
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
 import pandas as pd
 import numpy as np
 import xgboost as xgb

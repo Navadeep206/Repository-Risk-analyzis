@@ -37,8 +37,20 @@ def find_best_group_split(df: pd.DataFrame) -> Tuple[List[str], List[str], List[
     best_score = float("inf")
     best_coverage = 0
     
-    # Iterate through all 3^N combinations (0 = Train, 1 = Val, 2 = Test)
-    for assignment in itertools.product([0, 1, 2], repeat=n_repos):
+    # If N is small, do brute force. Otherwise, do randomized search to avoid exponential explosion.
+    if n_repos <= 9:
+        iterator = itertools.product([0, 1, 2], repeat=n_repos)
+    else:
+        import random
+        random.seed(42)
+        sampled = set()
+        # Generate up to 20,000 unique random assignments
+        while len(sampled) < 20000:
+            assignment = tuple(random.choice([0, 1, 2]) for _ in range(n_repos))
+            sampled.add(assignment)
+        iterator = list(sampled)
+        
+    for assignment in iterator:
         train_len = 0
         val_len = 0
         test_len = 0
@@ -118,7 +130,9 @@ def split_dataset() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFr
         "repository_name", "file_path", "language", "loc", "complexity",
         "maintainability_index", "commit_count", "modification_count",
         "contributor_count", "commit_frequency", "repository_age_days",
-        "bug_fix_commit_count", "historical_risk_label"
+        "bug_fix_commit_count", "ownership_concentration", "contributor_entropy",
+        "bus_factor", "recent_churn", "time_decayed_churn", "time_since_last_bug_fix",
+        "historical_bug_density", "historical_risk_label"
     ]
     
     # Ensure all required columns are present (safe fallback)
@@ -180,6 +194,11 @@ def split_dataset() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFr
     df_train.to_csv(train_file, index=False)
     df_val.to_csv(val_file, index=False)
     df_test.to_csv(test_file, index=False)
+    
+    # Also save as train.csv, validation.csv, test.csv for Phase D compatibility
+    df_train.to_csv(os.path.join(FINAL_DIR, "train.csv"), index=False)
+    df_val.to_csv(os.path.join(FINAL_DIR, "validation.csv"), index=False)
+    df_test.to_csv(os.path.join(FINAL_DIR, "test.csv"), index=False)
     
     print(f"[+] Split sizes -> Train: {len(df_train)} ({len(df_train)/len(df_master)*100:.2f}%), "
           f"Val: {len(df_val)} ({len(df_val)/len(df_master)*100:.2f}%), "

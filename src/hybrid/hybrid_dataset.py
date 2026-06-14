@@ -88,9 +88,8 @@ def get_hybrid_data() -> Tuple[pd.DataFrame, np.ndarray, np.ndarray, np.ndarray]
     preprocessor = CodeRiskPreprocessor.load(preproc_path)
     X_tabular = preprocessor.transform(df_merged)
     
-    # Re-verify feature size (must be 11)
-    if X_tabular.shape[1] != 11:
-        raise ValueError(f"Tabular features dimension mismatch: expected 11, got {X_tabular.shape[1]}")
+    # Log tabular feature size
+    print(f"[*] Preprocessed tabular features shape: {X_tabular.shape}")
 
     # Stack embeddings
     X_embedding = np.stack(df_merged["embedding"].values).astype(np.float32)
@@ -108,9 +107,9 @@ def get_hybrid_dataloaders(batch_size: int = 32) -> Tuple[DataLoader, DataLoader
     df_merged, X_tabular, X_embedding, y = get_hybrid_data()
     
     # Define repository-disjoint splits
-    train_repos = ["axios", "redux", "click"]
-    val_repos = ["express"]
-    test_repos = ["databases", "jinja"]
+    train_repos = pd.read_csv(os.path.join(FINAL_DIR, "train_v2.csv"))["repository_name"].unique().tolist()
+    val_repos = pd.read_csv(os.path.join(FINAL_DIR, "validation_v2.csv"))["repository_name"].unique().tolist()
+    test_repos = pd.read_csv(os.path.join(FINAL_DIR, "test_v2.csv"))["repository_name"].unique().tolist()
     
     # Train Split indices
     train_mask = df_merged["repository_name"].isin(train_repos).values

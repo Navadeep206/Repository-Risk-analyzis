@@ -50,13 +50,15 @@ def run_hybrid_pipeline() -> None:
     # 1. Dataset Loading
     print("\n[STAGE 1/4] Loading datasets and initializing joint splits...")
     train_loader, val_loader, test_loader, class_weights = get_hybrid_dataloaders(batch_size=32)
+    tabular_dim = train_loader.dataset.X_tabular.shape[1]
+    print(f"[+] Detected tabular feature dimension: {tabular_dim}")
     
     # 2. Train Ablation Study Models
     print("\n[STAGE 2/4] Training Ablation Study Models...")
     
     # --- Model A: Tabular Only ---
     print("\n>>> Training Model A: Tabular Only Predictor...")
-    model_a = TabularOnlyPredictor()
+    model_a = TabularOnlyPredictor(input_dim=tabular_dim)
     history_a = train_hybrid_model(
         model=model_a,
         train_loader=train_loader,
@@ -90,7 +92,7 @@ def run_hybrid_pipeline() -> None:
     
     # --- Model C: Hybrid Fusion ---
     print("\n>>> Training Model C: Hybrid Fusion Predictor...")
-    model_c = HybridRiskPredictor()
+    model_c = HybridRiskPredictor(tabular_dim=tabular_dim)
     history_c = train_hybrid_model(
         model=model_c,
         train_loader=train_loader,

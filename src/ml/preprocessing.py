@@ -23,40 +23,75 @@ os.makedirs(MODELS_DIR, exist_ok=True)
 
 class CodeRiskPreprocessor:
     """
-    Handles scaling of numeric features and one-hot encoding of categorical language tags.
+    Handles scaling of numeric features (optionally relative to repository) and one-hot encoding of categorical language tags.
     """
-    def __init__(self) -> None:
+    def __init__(self, relative_scaling: bool = True) -> None:
         self.numeric_features = [
-            "loc", "complexity", "maintainability_index", "commit_count",
-            "modification_count", "contributor_count", "commit_frequency", "repository_age_days"
+            "loc", "complexity", "commit_count",
+            "modification_count", "contributor_count", "commit_frequency", "repository_age_days",
+            "ownership_concentration", "contributor_entropy", "bus_factor",
+            "recent_churn", "time_decayed_churn", "historical_bug_density", "time_since_last_bug_fix"
         ]
         self.categorical_features = ["language"]
         self.preprocessor = None
         self.feature_names: List[str] = []
+        self.relative_scaling = relative_scaling
+
+    def _relative_scale(self, X: pd.DataFrame) -> pd.DataFrame:
+        df = X.copy()
+        if "repository_name" not in df.columns:
+            return df
+            
+        for col in self.numeric_features:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0).astype(float)
+            else:
+                df[col] = 0.0
+            
+        group_cols = ["repository_name"]
+        if "language" in df.columns:
+            group_cols.append("language")
+            
+        for keys, group_idx in df.groupby(group_cols).groups.items():
+            if len(group_idx) > 0:
+                sub_df = df.loc[group_idx, self.numeric_features]
+                scaler = StandardScaler()
+                scaled_vals = scaler.fit_transform(sub_df)
+                scaled_vals = np.nan_to_num(scaled_vals, nan=0.0)
+                df.loc[group_idx, self.numeric_features] = scaled_vals
+        return df
 
     def fit(self, X: pd.DataFrame) -> "CodeRiskPreprocessor":
         """
         Fits the scaler and encoder on the training data.
         """
-        # Ensure only relevant columns are present
-        X_subset = X[self.numeric_features + self.categorical_features].copy()
+        if self.relative_scaling:
+            X_proc = self._relative_scale(X)
+            num_transformer = "passthrough"
+        else:
+            X_proc = X.copy()
+            num_transformer = StandardScaler()
+            
+        transformers = []
+        if self.numeric_features:
+            transformers.append(("num", num_transformer, self.numeric_features))
+        if self.categorical_features:
+            transformers.append(("cat", OneHotEncoder(handle_unknown="ignore", sparse_output=False), self.categorical_features))
+            
+        self.preprocessor = ColumnTransformer(transformers=transformers)
         
-        # Define transformers
-        self.preprocessor = ColumnTransformer(
-            transformers=[
-                ("num", StandardScaler(), self.numeric_features),
-                ("cat", OneHotEncoder(handle_unknown="ignore", sparse_output=False), self.categorical_features)
-            ]
-        )
-        
+        # Ensure only relevant columns are present for fitting
+        all_features = self.numeric_features + self.categorical_features
+        X_subset = X_proc[all_features].copy()
         self.preprocessor.fit(X_subset)
         
         # Extract feature names after encoding
-        # Cat feature names from OneHotEncoder
-        cat_encoder = self.preprocessor.named_transformers_["cat"]
-        cat_features = cat_encoder.get_feature_names_out(self.categorical_features).tolist()
-        
-        self.feature_names = self.numeric_features + cat_features
+        self.feature_names = list(self.numeric_features)
+        if self.categorical_features:
+            cat_encoder = self.preprocessor.named_transformers_["cat"]
+            cat_features = cat_encoder.get_feature_names_out(self.categorical_features).tolist()
+            self.feature_names.extend(cat_features)
+            
         return self
 
     def transform(self, X: pd.DataFrame) -> np.ndarray:
@@ -66,7 +101,13 @@ class CodeRiskPreprocessor:
         if self.preprocessor is None:
             raise ValueError("Preprocessor has not been fitted yet. Call fit() first.")
             
-        X_subset = X[self.numeric_features + self.categorical_features].copy()
+        if self.relative_scaling:
+            X_proc = self._relative_scale(X)
+        else:
+            X_proc = X.copy()
+            
+        all_features = self.numeric_features + self.categorical_features
+        X_subset = X_proc[all_features].copy()
         return self.preprocessor.transform(X_subset)
 
     def save(self, file_path: str) -> None:

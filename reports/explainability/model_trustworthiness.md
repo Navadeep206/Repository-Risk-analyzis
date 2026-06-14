@@ -6,10 +6,10 @@ This report evaluates the trustworthiness of the Random Forest risk predictor, f
 
 | Confidence Band | Sample Count | Band Share | Accuracy |
 |-----------------|--------------|------------|----------|
-| Very High (>= 90%) | 11           | 13.1%      | 100.0%   |
-| High (70% - 90%)  | 15           | 17.9%      | 100.0%   |
-| Moderate (50% - 70%) | 48           | 57.1%      | 62.5%    |
-| Low (< 50%)       | 10           | 11.9%      | 70.0%    |
+| Very High (>= 90%) | 75           | 100.0%     | 100.0%   |
+| High (70% - 90%)  | 0            | 0.0%       | 0.0%     |
+| Moderate (50% - 70%) | 0            | 0.0%       | 0.0%     |
+| Low (< 50%)       | 0            | 0.0%       | 0.0%     |
 
 ## 2. Assessment Findings
 

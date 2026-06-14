@@ -12,15 +12,15 @@ This report summarizes the experimental results, model comparisons, and key take
 ---
 
 ## 2. Embedding Shift Findings
-- The average cosine similarity between CodeBERT repository centroids is **0.9880**.
+- The average cosine similarity between CodeBERT repository centroids is **0.9936**.
 - We observe a strong separation between programming language domains: client-side JavaScript repositories (`axios`, `express`, `redux`) cluster tightly together, while showing distinct spatial separation from Python codebases (`jinja`, `click`, `databases`).
 - The inter-repository centroid variance vs. intra-repository variance demonstrates that CodeBERT embeddings carry high repository-specific syntactic noise, explaining why raw embeddings fail to generalize under zero-shot disjoint evaluation.
 
 ---
 
 ## 3. Best Adaptation Method
-- The best performing model configuration under domain adaptation is **Repo-Normalized RF**, achieving a LORO Average Macro F1 of **0.5198**.
-- **Phase 12 Outcome**: **FAILURE** (Baseline LORO RF Macro F1 = `0.5277` | Best Adapted model LORO Macro F1 = `0.5198` | Delta = `-0.0079`).
+- The best performing model configuration under domain adaptation is **DANN**, achieving a LORO Average Macro F1 of **0.4713**.
+- **Phase 12 Outcome**: **FAILURE** (Baseline LORO RF Macro F1 = `0.5277` | Best Adapted model LORO Macro F1 = `0.4713` | Delta = `-0.0564`).
 
 ---
 
@@ -29,12 +29,12 @@ Below is the compiled performance benchmark across the evaluated domain adaptati
 
 | Rank | Model Name | Avg Accuracy | Avg Macro F1 | Avg Weighted F1 |
 | --- | --- | --- | --- | --- |
-| 1 | Repo-Normalized RF | 0.6554 | 0.5198 | 0.6300 |
-| 2 | CORAL RF | 0.6636 | 0.5015 | 0.6330 |
-| 3 | Baseline RF | 0.5992 | 0.4987 | 0.5776 |
-| 4 | Relative Features RF | 0.5980 | 0.4954 | 0.5837 |
-| 5 | DANN | 0.4713 | 0.4713 | 0.4713 |
-| 6 | CORAL XGBoost | 0.5795 | 0.4404 | 0.5303 |
+| 1 | DANN | 0.4713 | 0.4713 | 0.4713 |
+| 2 | Baseline RF | 0.3600 | 0.1765 | 0.1906 |
+| 3 | Relative Features RF | 0.3600 | 0.1765 | 0.1906 |
+| 4 | Repo-Normalized RF | 0.3600 | 0.1765 | 0.1906 |
+| 5 | CORAL RF | 0.3600 | 0.1765 | 0.1906 |
+| 6 | CORAL XGBoost | 0.3600 | 0.1765 | 0.1906 |
 
 
 ---
