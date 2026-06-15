@@ -1,3 +1,0 @@
-"""
-Dataset construction pipeline package.
-"""
