@@ -1,0 +1,36 @@
+{
+  "model_name": "XGBoost",
+  "version": "v3",
+  "feature_cols": [
+    "language",
+    "loc",
+    "complexity",
+    "maintainability_index",
+    "commit_count",
+    "modification_count",
+    "contributor_count",
+    "commit_frequency",
+    "repository_age_days",
+    "ownership_concentration",
+    "contributor_entropy",
+    "bus_factor",
+    "recent_churn",
+    "time_decayed_churn",
+    "time_since_last_bug_fix",
+    "has_bug_fix_history"
+  ],
+  "class_names": [
+    "HIGH",
+    "LOW",
+    "MEDIUM"
+  ],
+  "leakage_removed": [
+    "bug_fix_commit_count",
+    "historical_bug_density",
+    "time_since_last_bug_fix (sentinel)"
+  ],
+  "label_methodology": "composite_risk_score_tertile",
+  "p33_threshold": 0.3477785361330561,
+  "p67_threshold": 0.482417784623012,
+  "timestamp": "2026-06-15T09:36:55.070867"
+}
