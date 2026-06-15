@@ -1,27 +1,39 @@
 #!/usr/bin/env python3
 """
-Repository Risk Intelligence Platform — Premium Dashboard
-=========================================================
-Single-page Streamlit app. User pastes a GitHub URL, clicks Analyze,
-and gets a full production-grade risk intelligence report.
+Repository Risk Intelligence Platform — Premium Dashboard (V3)
+=============================================================
+Streamlit dashboard for repository cloning, feature extraction, 
+and file-level risk inference using the leakage-free XGBoost production model.
 """
 
-import os, sys, time, shutil, traceback, io, json, warnings, pickle, re
-from datetime import datetime
-from typing import Optional
+import os
+import sys
+import time
+import shutil
+import traceback
+import io
+import json
+import warnings
+import pickle
+import re
+import math
+from datetime import datetime, timezone
+from collections import defaultdict
 
 import numpy as np
 import pandas as pd
 import streamlit as st
+from scipy.stats import entropy as scipy_entropy
+from sklearn.metrics.pairwise import cosine_similarity
 
 warnings.filterwarnings("ignore")
 
 # ── path bootstrap ────────────────────────────────────────────────────────────
 BASE = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-SRC  = BASE
-sys.path.insert(0, SRC)
+sys.path.insert(0, BASE)
+sys.path.insert(0, os.path.join(BASE, "src"))
 
-from config import RAW_DIR, PROCESSED_DIR, REPOS_DIR, ensure_dirs_exist
+from pdf_generator import generate_pdf_report
 
 # ── page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -98,7 +110,6 @@ html, body, [class*="css"], .stApp {
 .risk-banner-low    { background: linear-gradient(135deg,#052e16 0%,#14532d 100%); border: 1px solid #16a34a; }
 .risk-banner-medium { background: linear-gradient(135deg,#1c1917 0%,#451a03 100%); border: 1px solid #d97706; }
 .risk-banner-high   { background: linear-gradient(135deg,#1c0a0a 0%,#450a0a 100%); border: 1px solid #dc2626; }
-.risk-banner-critical{ background: linear-gradient(135deg,#1c0a0a 0%,#7f1d1d 100%); border: 1px solid #ef4444; }
 
 .risk-label { font-size: 2rem; font-weight: 800; display: flex; align-items: center; gap: 0.75rem; }
 .health-ring { text-align: center; }
@@ -119,7 +130,7 @@ html, body, [class*="css"], .stApp {
 
 /* ── section header ── */
 .section-hdr {
-    font-size: 0.7rem; font-weight: 700; color: #6366f1;
+    font-size: 0.75rem; font-weight: 700; color: #6366f1;
     text-transform: uppercase; letter-spacing: 0.15em;
     margin-bottom: 0.75rem; display: flex; align-items: center; gap: 0.4rem;
 }
@@ -155,23 +166,8 @@ html, body, [class*="css"], .stApp {
     display: flex; align-items: center; justify-content: center;
     font-size: 0.9rem; font-weight: 800; flex-shrink: 0;
 }
-.crit-path { font-size: 0.82rem; font-weight: 600; color: #f8fafc; font-family: 'Courier New', monospace; }
+.crit-path { font-size: 0.82rem; font-weight: 600; color: #f8fafc; font-family: 'Courier New', monospace; word-break: break-all; }
 .crit-reasons { font-size: 0.72rem; color: #94a3b8; margin-top: 0.2rem; }
-
-/* ── heatmap tree ── */
-.tree-file {
-    display: flex; align-items: center; gap: 0.5rem;
-    padding: 0.35rem 0.6rem; border-radius: 6px;
-    font-size: 0.8rem; font-family: 'Courier New', monospace;
-    transition: background 0.15s;
-}
-.tree-file:hover { background: rgba(255,255,255,0.04); }
-.tree-folder { font-size: 0.75rem; font-weight: 700; color: #6366f1; padding: 0.5rem 0 0.2rem; letter-spacing: 0.04em; }
-.risk-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-.dot-critical { background: #ef4444; box-shadow: 0 0 6px rgba(239,68,68,0.7); }
-.dot-high     { background: #f97316; box-shadow: 0 0 6px rgba(249,115,22,0.7); }
-.dot-medium   { background: #eab308; box-shadow: 0 0 6px rgba(234,179,8,0.5);  }
-.dot-low      { background: #22c55e; box-shadow: 0 0 6px rgba(34,197,94,0.5);  }
 
 /* ── trust gate ── */
 .trust-chip {
@@ -180,6 +176,7 @@ html, body, [class*="css"], .stApp {
     font-size: 0.72rem; font-weight: 600;
 }
 .trust-high { background: rgba(34,197,94,0.12); color: #4ade80; border: 1px solid rgba(34,197,94,0.25); }
+.trust-good { background: rgba(59,130,246,0.12); color: #60a5fa; border: 1px solid rgba(59,130,246,0.25); }
 .trust-mod  { background: rgba(234,179,8,0.12);  color: #facc15; border: 1px solid rgba(234,179,8,0.25);  }
 .trust-low  { background: rgba(239,68,68,0.12); color: #f87171; border: 1px solid rgba(239,68,68,0.25); }
 
@@ -228,107 +225,410 @@ hr { border-color: #1e293b !important; }
 </style>
 """, unsafe_allow_html=True)
 
-
 # ══════════════════════════════════════════════════════════════════════════════
-# HELPERS
+# STATIC VARIABLES & UTILITIES
 # ══════════════════════════════════════════════════════════════════════════════
-INV_LABEL = {0: "LOW", 1: "MEDIUM", 2: "HIGH"}
-LABEL_MAP  = {"LOW": 0, "MEDIUM": 1, "HIGH": 2}
-NUMERIC_FEATURES = [
-    "loc", "complexity", "maintainability_index", "commit_count",
-    "modification_count", "contributor_count", "commit_frequency", "repository_age_days"
-]
+MODELS_DIR  = os.path.join(BASE, "models")
+EXT_DIR     = os.path.join(BASE, "data/external_repos")
+TRAIN_DATA  = os.path.join(BASE, "data/final/ml_dataset_v3.csv")
+CLONE_DEPTH = 200
 
+NUM_FEATS = ["loc","complexity","maintainability_index","commit_count",
+             "modification_count","contributor_count","commit_frequency",
+             "repository_age_days","ownership_concentration",
+             "contributor_entropy","bus_factor","recent_churn","time_decayed_churn"]
 
 def risk_score(row: pd.Series) -> float:
-    """
-    Compute a 0-100 risk score from model probabilities + complexity signals.
-    """
-    prob_high = float(row.get("prob_HIGH", row.get("prob_MEDIUM", 0.5)))
+    """Compute a 0-100 risk score combining model probabilities, complexity & MI."""
+    prob_high = float(row.get("prob_HIGH", 0.5))
     prob_med  = float(row.get("prob_MEDIUM", 0.3))
     base      = prob_high * 70 + prob_med * 30
 
-    # Normalize complexity contribution (0-20 pts)
     cmplx = float(row.get("complexity", 0))
-    cmplx_pts = min(20, cmplx * 0.8)
+    cmplx_pts = min(20.0, cmplx * 0.8)
 
-    # Low maintainability adds up to 10 pts
-    mi = float(row.get("maintainability_index", 100))
-    mi_pts = max(0, (100 - mi) * 0.1)
+    mi = float(row.get("maintainability_index", 100.0))
+    mi_pts = max(0.0, (100.0 - mi) * 0.1)
 
-    score = min(100, base + cmplx_pts + mi_pts)
+    score = min(100.0, base + cmplx_pts + mi_pts)
     return round(score, 1)
 
-
-def risk_level(score: float) -> str:
-    if score >= 90: return "Critical"
-    if score >= 75: return "High"
-    if score >= 50: return "Medium"
+def tech_debt_priority(score: float) -> str:
+    if score >= 80: return "Critical"
+    if score >= 60: return "High"
+    if score >= 40: return "Medium"
     return "Low"
 
+def tech_debt_color(priority: str) -> str:
+    return {"Critical":"#ef4444","High":"#f97316","Medium":"#eab308","Low":"#22c55e"}.get(priority, "#6366f1")
 
 def risk_emoji(level: str) -> str:
     return {"Critical": "🔴", "High": "🟠", "Medium": "🟡", "Low": "🟢"}.get(level, "⚪")
-
 
 def badge_html(level: str) -> str:
     cls = {"Critical":"badge-critical","High":"badge-high","Medium":"badge-medium","Low":"badge-low"}.get(level,"badge-low")
     return f'<span class="badge {cls}">{risk_emoji(level)} {level}</span>'
 
+def trust_level(conf: float) -> str:
+    pct = conf * 100 if conf <= 1.0 else conf
+    if pct >= 90: return "HIGH TRUST"
+    if pct >= 80: return "GOOD TRUST"
+    if pct >= 70: return "MODERATE TRUST"
+    return "MANUAL REVIEW RECOMMENDED"
 
 def trust_html(conf: float) -> str:
-    pct = conf * 100 if conf <= 1 else conf
+    pct = conf * 100 if conf <= 1.0 else conf
     if pct >= 90:
-        return f'<span class="trust-chip trust-high">🟢 High ({pct:.0f}%)</span>'
+        return f'<span class="trust-chip trust-high">🟢 HIGH TRUST ({pct:.0f}%)</span>'
+    elif pct >= 80:
+        return f'<span class="trust-chip trust-good">🔵 GOOD TRUST ({pct:.0f}%)</span>'
     elif pct >= 70:
-        return f'<span class="trust-chip trust-mod">🟡 Moderate ({pct:.0f}%)</span>'
+        return f'<span class="trust-chip trust-mod">🟡 MODERATE TRUST ({pct:.0f}%)</span>'
     else:
-        return f'<span class="trust-chip trust-low">🔴 Review ({pct:.0f}%)</span>'
-
+        return f'<span class="trust-chip trust-low">🔴 REVIEW RECOMMENDED ({pct:.0f}%)</span>'
 
 def health_score(df: pd.DataFrame) -> int:
-    """0-100 repo health score (inverse of average risk)."""
+    """Calculates repository health score between 0 and 100."""
     if df.empty or "risk_score_val" not in df.columns:
-        return 50
-    avg = df["risk_score_val"].mean()
-    return max(0, min(100, int(100 - avg)))
-
-
-def risk_drivers(row: pd.Series) -> list:
-    drivers = []
-    if float(row.get("complexity", 0))         > 10:  drivers.append("High Cyclomatic Complexity")
-    if float(row.get("maintainability_index",100)) < 50: drivers.append("Low Maintainability Index")
-    if float(row.get("modification_count", 0)) > 30:  drivers.append("High Modification Frequency")
-    if float(row.get("commit_count", 0))        > 50:  drivers.append("High Commit Churn")
-    if float(row.get("contributor_count", 0))   > 10:  drivers.append("High Contributor Turnover")
-    if float(row.get("loc", 0))                 > 500: drivers.append("Large File Size")
-    if not drivers:
-        drivers.append("Multiple marginal risk signals")
-    return drivers[:3]
-
+        return 100
+    # Weighted health score: 100 minus the average risk score
+    avg_risk = df["risk_score_val"].mean()
+    return max(0, min(100, int(100 - avg_risk)))
 
 def parse_github_url(url: str):
-    """Returns (owner, repo) from a GitHub URL or None."""
     url = url.strip().rstrip("/")
     m = re.match(r"https?://github\.com/([^/]+)/([^/\s]+)", url)
     if m:
         return m.group(1), m.group(2)
     return None, None
 
+@st.cache_data
+def get_training_centroids():
+    """Load and cache centroids of training repositories to avoid disk reading repeatedly."""
+    if os.path.exists(TRAIN_DATA):
+        try:
+            train_df = pd.read_csv(TRAIN_DATA, low_memory=True)
+            return train_df.groupby("repository_name")[NUM_FEATS].mean()
+        except Exception:
+            pass
+    return None
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PIPELINE RUNNER
+# FEATURE EXTRACTION ENGINE (Leakage-free V3 identical logic)
 # ══════════════════════════════════════════════════════════════════════════════
-def run_pipeline(owner: str, repo_name: str, log_box) -> Optional[pd.DataFrame]:
-    """
-    Runs the complete repository risk intelligence pipeline and returns
-    a dataframe of file-level predictions, or None on fatal error.
-    """
-    import importlib, shutil
+IGNORED_DIRS = {
+    ".venv", "venv", "node_modules", ".git", "__pycache__",
+    "dist", "build", "vendor", "third_party", ".next", ".turbo",
+    "coverage", ".nyc_output", "out", ".output", "fixtures",
+}
 
-    REPO_LOCAL = os.path.join(REPOS_DIR, repo_name)
-    ensure_dirs_exist()
-    os.makedirs(REPOS_DIR, exist_ok=True)
+def get_source_files(repo_path):
+    files = {"python": [], "javascript": [], "typescript": []}
+    for root, dirs, fnames in os.walk(repo_path):
+        dirs[:] = [d for d in dirs if d not in IGNORED_DIRS]
+        for f in fnames:
+            ext = os.path.splitext(f)[1].lower()
+            ap  = os.path.join(root, f)
+            if ext == ".py":              files["python"].append(ap)
+            elif ext in (".js", ".jsx"):  files["javascript"].append(ap)
+            elif ext in (".ts", ".tsx"):  files["typescript"].append(ap)
+    return files
+
+def compute_maintainability(loc, complexity):
+    try:
+        V   = max(1, loc) * 4
+        CC  = max(1, complexity)
+        L   = max(1, loc)
+        mi  = (171 - 5.2 * math.log(V) - 0.23 * CC - 16.2 * math.log(L)) * 100.0 / 171
+        return round(max(-100.0, min(100.0, mi)), 4)
+    except Exception:
+        return 50.0
+
+def analyze_python_file(path):
+    try:
+        import ast
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            src = f.read()
+        loc = len([l for l in src.splitlines() if l.strip() and not l.strip().startswith("#")])
+        try:
+            tree = ast.parse(src)
+            complexity = 1
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.If, ast.For, ast.While, ast.ExceptHandler,
+                                     ast.With, ast.Assert, ast.comprehension,
+                                     ast.BoolOp, ast.IfExp)):
+                    complexity += 1
+        except SyntaxError:
+            complexity = max(1, loc // 20)
+        mi = compute_maintainability(loc, complexity)
+        return loc, complexity, mi
+    except Exception:
+        return 0, 1, 50.0
+
+def analyze_js_ts_file(path):
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+        code_lines = [l for l in lines if l.strip() and not l.strip().startswith("//")
+                      and not l.strip().startswith("*") and not l.strip().startswith("/*")]
+        loc = len(code_lines)
+        src = "".join(lines)
+        keywords = ["if ", "else if", "for ", "while ", "switch ", "catch ",
+                    "&&", "||", "? ", "?."]
+        complexity = 1 + sum(src.count(kw) for kw in keywords)
+        complexity = min(complexity, max(1, loc // 3))
+        mi = compute_maintainability(loc, complexity)
+        return loc, complexity, mi
+    except Exception:
+        return 0, 1, 50.0
+
+def extract_quality_metrics(repo_path, repo_name, log_func):
+    log_func("🔬 Extracting quality metrics...", "run")
+    files_by_lang = get_source_files(repo_path)
+    rows = []
+    for lang, paths in files_by_lang.items():
+        for path in paths:
+            rel = os.path.relpath(path, repo_path)
+            if lang == "python":
+                loc, cc, mi = analyze_python_file(path)
+            else:
+                loc, cc, mi = analyze_js_ts_file(path)
+            rows.append({"file_path": rel, "language": lang,
+                         "loc": loc, "complexity": cc, "maintainability_index": mi})
+    df = pd.DataFrame(rows)
+    langs_found = {k: len(v) for k, v in files_by_lang.items() if len(v) > 0}
+    log_func(f"✅ Extracted metrics for {len(df):,} source files {langs_found}", "ok")
+    return df
+
+def extract_commit_features(repo_path, repo_name, log_func):
+    log_func("📝 Analyzing git commit logs (pydriller)...", "run")
+    from pydriller import Repository
+
+    file_commits    = defaultdict(set)
+    file_authors    = defaultdict(set)
+    file_added      = defaultdict(int)
+    file_deleted    = defaultdict(int)
+    file_dates      = defaultdict(list)
+    author_commits  = defaultdict(int)
+    commit_dates    = []
+
+    SUPPORTED_EXT = {".py", ".js", ".jsx", ".ts", ".tsx"}
+    total_commits = 0
+
+    for commit in Repository(repo_path).traverse_commits():
+        total_commits += 1
+        c_date = commit.author_date
+        if c_date and hasattr(c_date, "tzinfo") and c_date.tzinfo is None:
+            c_date = c_date.replace(tzinfo=timezone.utc)
+        if c_date:
+            commit_dates.append(c_date)
+        author = commit.author.email if commit.author else "unknown"
+        author_commits[author] += 1
+
+        try:
+            for mod in commit.modified_files:
+                fpath = mod.new_path or mod.old_path
+                if not fpath:
+                    continue
+                ext = os.path.splitext(fpath)[1].lower()
+                if ext not in SUPPORTED_EXT:
+                    continue
+                file_commits[fpath].add(commit.hash)
+                file_authors[fpath].add(author)
+                file_added[fpath]   += (mod.added_lines or 0)
+                file_deleted[fpath] += (mod.deleted_lines or 0)
+                if c_date:
+                    file_dates[fpath].append(c_date)
+        except Exception:
+            continue
+
+        if total_commits % 200 == 0:
+            log_func(f"  Processed {total_commits} commits...", "info")
+
+    log_func(f"✅ Commit log analysis complete. Total commits: {total_commits}", "ok")
+
+    # Repo-level stats
+    now = datetime.now(timezone.utc)
+    if commit_dates:
+        commit_dates_sorted = sorted(commit_dates)
+        repo_age_days   = max(1, (commit_dates_sorted[-1] - commit_dates_sorted[0]).days)
+    else:
+        repo_age_days   = 1
+
+    total_repo_commits = sum(author_commits.values())
+    if total_repo_commits > 0:
+        top_commits = sorted(author_commits.values(), reverse=True)
+        top_share   = top_commits[0] / total_repo_commits
+        cumulative, bf = 0, 0
+        for c in top_commits:
+            cumulative += c / total_repo_commits
+            bf += 1
+            if cumulative >= 0.5:
+                break
+        repo_ownership_conc = top_share
+        repo_bus_factor     = bf
+        all_authors         = list(author_commits.keys())
+        shares = np.array([author_commits[a] / total_repo_commits for a in all_authors])
+        repo_entropy = float(scipy_entropy(shares, base=2)) if len(shares) > 1 else 0.0
+    else:
+        repo_ownership_conc = 1.0
+        repo_bus_factor     = 1
+        repo_entropy        = 0.0
+
+    # Per-file features calculation
+    RECENT_WINDOW_DAYS = 90
+    DECAY_LAMBDA       = 0.01
+
+    per_file_rows = []
+    for fpath in set(file_commits.keys()):
+        dates = sorted(file_dates.get(fpath, []))
+        commit_count      = len(file_commits[fpath])
+        modification_count= commit_count
+        contributor_count = len(file_authors[fpath])
+        commit_frequency  = commit_count / repo_age_days
+
+        recent_churn = 0
+        if dates:
+            total_churn = file_added[fpath] + file_deleted[fpath]
+            recent_churn = round(total_churn * min(1.0, RECENT_WINDOW_DAYS / max(1, repo_age_days)), 2)
+
+        total_churn_f = file_added[fpath] + file_deleted[fpath]
+        if dates and total_churn_f > 0:
+            mid_date    = dates[len(dates)//2]
+            ref_date    = dates[-1]
+            days_back   = max(0, (ref_date - mid_date).days)
+            decay_w     = math.exp(-DECAY_LAMBDA * days_back)
+            time_decayed_churn = round(total_churn_f * decay_w, 4)
+        else:
+            time_decayed_churn = 0.0
+
+        if contributor_count <= 1:
+            ownership_conc = 1.0
+            contributor_ent = 0.0
+            bus_f = 1
+        else:
+            ownership_conc = 1.0 / contributor_count
+            shares_f = np.ones(contributor_count) / contributor_count
+            contributor_ent = float(scipy_entropy(shares_f, base=2))
+            bus_f = min(contributor_count, repo_bus_factor)
+
+        has_bug_fix_history = 0
+        time_since_last_bug_fix = np.nan
+
+        per_file_rows.append({
+            "file_path":              fpath,
+            "commit_count":           commit_count,
+            "modification_count":     modification_count,
+            "contributor_count":      contributor_count,
+            "commit_frequency":       round(commit_frequency, 6),
+            "repository_age_days":    repo_age_days,
+            "ownership_concentration":round(ownership_conc, 6),
+            "contributor_entropy":    round(contributor_ent, 6),
+            "bus_factor":             bus_f,
+            "recent_churn":           recent_churn,
+            "time_decayed_churn":     time_decayed_churn,
+            "time_since_last_bug_fix":time_since_last_bug_fix,
+            "has_bug_fix_history":    has_bug_fix_history,
+        })
+
+    commit_df = pd.DataFrame(per_file_rows)
+    meta = {
+        "total_commits":      total_commits,
+        "repo_age_days":      repo_age_days,
+        "contributor_count":  len(author_commits),
+        "bus_factor":         repo_bus_factor,
+        "ownership_conc":     repo_ownership_conc,
+        "entropy":            repo_entropy,
+    }
+    return commit_df, meta
+
+def build_feature_matrix(quality_df, commit_df, repo_name):
+    if commit_df is not None and len(commit_df) > 0:
+        merged = quality_df.merge(commit_df, on="file_path", how="left")
+    else:
+        merged = quality_df.copy()
+        for col in ["commit_count","modification_count","contributor_count",
+                    "commit_frequency","repository_age_days","ownership_concentration",
+                    "contributor_entropy","bus_factor","recent_churn",
+                    "time_decayed_churn","time_since_last_bug_fix","has_bug_fix_history"]:
+            merged[col] = 0.0
+
+    merged["commit_count"]         = merged.get("commit_count", pd.Series()).fillna(0.0)
+    merged["modification_count"]   = merged.get("modification_count", pd.Series()).fillna(0.0)
+    merged["contributor_count"]    = merged.get("contributor_count", pd.Series()).fillna(0.0)
+    merged["commit_frequency"]     = merged.get("commit_frequency", pd.Series()).fillna(0.0)
+    
+    if "repository_age_days" in merged.columns:
+        age_mode = merged["repository_age_days"].mode()
+        merged["repository_age_days"] = merged["repository_age_days"].fillna(
+            age_mode.iloc[0] if len(age_mode) > 0 else 1.0
+        )
+    else:
+        merged["repository_age_days"] = 1.0
+        
+    merged["ownership_concentration"] = merged.get("ownership_concentration", pd.Series()).fillna(1.0)
+    merged["contributor_entropy"]  = merged.get("contributor_entropy", pd.Series()).fillna(0.0)
+    merged["bus_factor"]           = merged.get("bus_factor", pd.Series()).fillna(1.0)
+    merged["recent_churn"]         = merged.get("recent_churn", pd.Series()).fillna(0.0)
+    merged["time_decayed_churn"]   = merged.get("time_decayed_churn", pd.Series()).fillna(0.0)
+    merged["time_since_last_bug_fix"] = merged.get("time_since_last_bug_fix", pd.Series())
+    merged["has_bug_fix_history"]  = merged.get("has_bug_fix_history", pd.Series()).fillna(0.0)
+    merged["repository_name"]      = repo_name
+
+    return merged[merged["loc"] > 0].copy()
+
+def is_string_col(series):
+    try:
+        pd.to_numeric(series.dropna(), errors="raise")
+        return False
+    except (ValueError, TypeError):
+        return True
+
+def run_inference(df, preprocessor, model):
+    cat_enc  = preprocessor["cat_encodings"]
+    scaler   = preprocessor["scaler"]
+    le_label = preprocessor["le_label"]
+    feat     = preprocessor["feature_cols"]
+
+    cat_cols = [c for c in feat if is_string_col(df[c]) or c == "language"]
+    num_cols = [c for c in feat if c not in cat_cols]
+
+    out = pd.DataFrame(index=df.index)
+    for col in cat_cols:
+        le = cat_enc.get(col)
+        if le is None:
+            out[col] = 0
+            continue
+        seen = set(le.classes_)
+        vals = df[col].fillna("unknown").astype(str)
+        out[col] = vals.apply(lambda v: int(le.transform([v])[0]) if v in seen else 0)
+    for col in num_cols:
+        s = pd.to_numeric(df[col], errors="coerce")
+        out[col] = s.fillna(s.median() if not s.isna().all() else 0.0)
+
+    X = scaler.transform(out[feat].values)
+    proba  = model.predict_proba(X)
+    labels = le_label.inverse_transform(np.argmax(proba, axis=1))
+    conf   = np.max(proba, axis=1)
+
+    classes = le_label.classes_
+    result  = df.copy()
+    result["predicted_risk"]    = labels
+    result["confidence_score"]  = np.round(conf, 4)
+    for i, cls in enumerate(classes):
+        result[f"prob_{cls}"] = np.round(proba[:, i], 4)
+
+    # Calculate custom UI scores
+    result["risk_score_val"] = result.apply(risk_score, axis=1)
+    result["tech_debt_priority"] = result["risk_score_val"].apply(tech_debt_priority)
+    return result
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MAIN PIPELINE EXECUTION
+# ══════════════════════════════════════════════════════════════════════════════
+def run_pipeline(owner: str, repo_name: str, log_box) -> Optional[dict]:
+    REPO_LOCAL = os.path.join(EXT_DIR, repo_name)
+    os.makedirs(EXT_DIR, exist_ok=True)
 
     logs = []
     def log(msg: str, kind: str = "run"):
@@ -336,356 +636,142 @@ def run_pipeline(owner: str, repo_name: str, log_box) -> Optional[pd.DataFrame]:
         ts  = datetime.now().strftime("%H:%M:%S")
         logs.append(f'<span class="{css}">[{ts}] {msg}</span>')
         log_box.markdown(
-            f'<div class="step-log">{"<br>".join(logs[-18:])}</div>',
+            f'<div class="step-log">{"<br>".join(logs[-10:])}</div>',
             unsafe_allow_html=True
         )
 
-    # ── STEP 0: Clone ─────────────────────────────────────────────────────
-    log(f"🔗 Cloning {owner}/{repo_name}…")
+    # ── STEP 1: Clone ─────────────────────────────────────────────────────
+    log(f"🔗 Cloning {owner}/{repo_name} (depth={CLONE_DEPTH})…")
     try:
         if not os.path.isdir(os.path.join(REPO_LOCAL, ".git")):
             from git import Repo
-            Repo.clone_from(f"https://github.com/{owner}/{repo_name}", REPO_LOCAL)
-        log(f"✅ Repository cloned/found at {REPO_LOCAL}", "ok")
-    except Exception as e:
-        log(f"❌ Clone failed: {e}", "err"); return None
-
-    # ── STEP 1: Commits ───────────────────────────────────────────────────
-    log("📝 Extracting commit history…")
-    commits_csv = os.path.join(RAW_DIR, f"{repo_name}_commits.csv")
-    try:
-        if not os.path.exists(commits_csv):
-            from commit_extractor import extract_commits
-            extract_commits(REPO_LOCAL, commits_csv)
-        df_commits = pd.read_csv(commits_csv)
-        log(f"✅ {len(df_commits):,} commits extracted", "ok")
-    except Exception as e:
-        log(f"⚠️  Commit extraction error: {e}", "info")
-        df_commits = pd.DataFrame()
-
-    # ── STEP 2: Modifications ─────────────────────────────────────────────
-    log("🔍 Mining file-level modifications…")
-    mods_csv = os.path.join(RAW_DIR, f"{repo_name}_modifications.csv")
-    try:
-        if not os.path.exists(mods_csv):
-            from modification_extractor import extract_modifications
-            extract_modifications(REPO_LOCAL, mods_csv)
-        df_mods = pd.read_csv(mods_csv)
-        log(f"✅ {len(df_mods):,} file modifications mined", "ok")
-    except Exception as e:
-        log(f"⚠️  Modification extraction error: {e}", "info")
-        df_mods = pd.DataFrame()
-
-    # ── STEP 3: Quality Metrics ───────────────────────────────────────────
-    log("🔬 Running quality metrics pipeline…")
-    py_bak  = os.path.join(RAW_DIR, "_bak_py.csv")
-    js_bak  = os.path.join(RAW_DIR, "_bak_js.csv")
-    ts_bak  = os.path.join(RAW_DIR, "_bak_ts.csv")
-    for src, bak in [
-        (os.path.join(RAW_DIR, "python_metrics.csv"), py_bak),
-        (os.path.join(RAW_DIR, "javascript_metrics.csv"), js_bak),
-        (os.path.join(RAW_DIR, "typescript_metrics.csv"), ts_bak),
-    ]:
-        if os.path.exists(src): shutil.copy2(src, bak)
-    try:
-        from quality_metrics.quality_pipeline import run_quality_pipeline
-        quality_out = os.path.join(PROCESSED_DIR, f"{repo_name}_quality_metrics.csv")
-        df_quality = run_quality_pipeline(REPO_LOCAL, quality_out)
-        df_quality.to_csv(os.path.join(PROCESSED_DIR, "quality_metrics.csv"), index=False)
-        log(f"✅ {len(df_quality)} files analyzed. Languages: {df_quality['language'].unique().tolist()}", "ok")
-    except Exception as e:
-        log(f"⚠️  Quality pipeline error: {e}", "info")
-        df_quality = pd.DataFrame()
-    finally:
-        for bak, dst in [
-            (py_bak, os.path.join(RAW_DIR, "python_metrics.csv")),
-            (js_bak, os.path.join(RAW_DIR, "javascript_metrics.csv")),
-            (ts_bak, os.path.join(RAW_DIR, "typescript_metrics.csv")),
-        ]:
-            if os.path.exists(bak): shutil.copy2(bak, dst); os.remove(bak)
-
-    if df_quality.empty:
-        log("❌ No source files found or quality pipeline failed", "err"); return None
-
-    # ── STEP 4: Merge & Feature Engineering ──────────────────────────────
-    log("⚙️  Building features…")
-    try:
-        df_q = df_quality.copy()
-        if "repository_name" not in df_q.columns or not (df_q["repository_name"] == repo_name).any():
-            df_q["repository_name"] = repo_name
-
-        # Bug-fix detection
-        bug_hashes: set = set()
-        if not df_commits.empty and "message" in df_commits.columns:
-            df_commits["message"] = df_commits["message"].fillna("").astype(str)
-            kw = ["fix","bug","hotfix","regression","patch","issue"]
-            df_commits["is_bug_fix"] = df_commits["message"].str.contains("|".join(kw), case=False)
-            bug_hashes = set(df_commits[df_commits["is_bug_fix"]]["commit_hash"])
-
-        if not df_mods.empty:
-            df_mods["file_path"] = df_mods["new_path"].fillna(df_mods["old_path"])
-            df_mods["is_bug_fix"] = df_mods["commit_hash"].isin(bug_hashes)
-            agg = df_mods.groupby("file_path").agg(
-                modification_count=("commit_hash","count"),
-                commit_count=("commit_hash","nunique"),
-                contributor_count=("author_email","nunique"),
-                bug_fix_commit_count=("commit_hash", lambda x: int(x[df_mods.loc[x.index,"is_bug_fix"]].nunique()))
-            ).reset_index()
-            df_q = pd.merge(df_q, agg, on="file_path", how="left")
-            for c in ["modification_count","commit_count","contributor_count","bug_fix_commit_count"]:
-                df_q[c] = df_q[c].fillna(0).astype(int)
+            Repo.clone_from(
+                f"https://github.com/{owner}/{repo_name}",
+                REPO_LOCAL,
+                depth=CLONE_DEPTH,
+                single_branch=True
+            )
+            log(f"✅ Repository cloned successfully", "ok")
         else:
-            for c in ["modification_count","commit_count","contributor_count","bug_fix_commit_count"]:
-                df_q[c] = 0
-
-        # Repo age
-        repo_age = 1
-        if not df_commits.empty and "committer_date" in df_commits.columns:
-            dates = pd.to_datetime(df_commits["committer_date"], errors="coerce", utc=True)
-            diff = (dates.max() - dates.min()).days
-            repo_age = max(1, diff)
-
-        df_q["repository_age_days"] = repo_age
-        df_q["commit_frequency"]   = df_q["commit_count"] / repo_age
-        for col in NUMERIC_FEATURES:
-            if col not in df_q.columns: df_q[col] = 0.0
-            else: df_q[col] = pd.to_numeric(df_q[col], errors="coerce").fillna(0.0)
-
-        # Labels from bug-fix counts
-        def lbl(n): return "LOW" if n==0 else ("MEDIUM" if n<=2 else "HIGH")
-        df_q["historical_risk_label"] = df_q.get("bug_fix_commit_count", pd.Series(0, index=df_q.index)).apply(lbl)
-
-        log(f"✅ Features engineered. Repo age: {repo_age} days, {len(bug_hashes)} bug-fix commits", "ok")
+            log(f"✓ Repository already exists locally — skipping clone", "ok")
     except Exception as e:
-        log(f"❌ Feature engineering failed: {e}", "err")
-        traceback.print_exc(); return None
+        log(f"❌ Clone failed: {e}", "err")
+        return None
 
-    # ── STEP 5: RF Prediction ─────────────────────────────────────────────
-    log("🤖 Running Random Forest risk prediction…")
+    # ── STEP 2: Metrics ───────────────────────────────────────────────────
     try:
-        from ml.preprocessing import CodeRiskPreprocessor
-        preproc_path = os.path.join(BASE, "models", "preprocessor.pkl")
-        rf_path      = os.path.join(BASE, "models", "random_forest.pkl")
-        preprocessor = CodeRiskPreprocessor.load(preproc_path)
-        with open(rf_path, "rb") as f: rf_model = pickle.load(f)
-
-        if "language" not in df_q.columns: df_q["language"] = "python"
-        df_q["language"] = df_q["language"].fillna("python").astype(str)
-
-        X = preprocessor.transform(df_q)
-        preds = rf_model.predict(X)
-        probs = rf_model.predict_proba(X)
-
-        df_q["predicted_label"] = [INV_LABEL.get(p,"LOW") for p in preds]
-        df_q["confidence"]      = np.max(probs, axis=1)
-        df_q["prob_LOW"]        = probs[:,0]
-        df_q["prob_MEDIUM"]     = probs[:,1]
-        df_q["prob_HIGH"]       = probs[:,2]
-        df_q["risk_score_val"]  = df_q.apply(risk_score, axis=1)
-        df_q["risk_level_name"] = df_q["risk_score_val"].apply(risk_level)
-
-        dist = df_q["predicted_label"].value_counts().to_dict()
-        avg_conf = float(df_q["confidence"].mean())
-        log(f"✅ Predicted {len(df_q)} files — {dist}. Avg confidence: {avg_conf:.1%}", "ok")
+        quality_df = extract_quality_metrics(REPO_LOCAL, repo_name, log)
+        if len(quality_df) == 0:
+            log("❌ No source files found for analysis", "err")
+            return None
     except Exception as e:
-        log(f"❌ Prediction failed: {e}", "err")
-        traceback.print_exc(); return None
+        log(f"❌ Metrics extraction failed: {e}", "err")
+        return None
 
-    # ── STEP 6: Done ─────────────────────────────────────────────────────
-    log("📊 Generating report…", "info")
-    time.sleep(0.3)
-    log("🏆 Analysis complete!", "ok")
-
-    return df_q
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# CHARTS (Plotly)
-# ══════════════════════════════════════════════════════════════════════════════
-def render_charts(df: pd.DataFrame):
+    # ── STEP 3: Commits ───────────────────────────────────────────────────
     try:
-        import plotly.graph_objects as go
-        import plotly.express as px
+        commit_df, meta = extract_commit_features(REPO_LOCAL, repo_name, log)
+    except Exception as e:
+        log(f"⚠️ Commit analysis failed: {e}. Proceeding with default features...", "info")
+        commit_df = None
+        meta = {"total_commits": 0, "repo_age_days": 1, "contributor_count": 1, "bus_factor": 1, "ownership_conc": 1.0, "entropy": 0.0}
 
-        PLOTLY_LAYOUT = dict(
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-            font=dict(family="Inter", color="#94a3b8", size=12),
-            margin=dict(l=0, r=0, t=30, b=0),
-        )
-        GRID = dict(gridcolor="#1e293b", zerolinecolor="#1e293b")
+    # ── STEP 4: Feature Matrix ────────────────────────────────────────────
+    log("⚙️ Engineering feature matrix...", "run")
+    try:
+        feat_df = build_feature_matrix(quality_df, commit_df, repo_name)
+        log(f"✅ Engineered features for {len(feat_df):,} files", "ok")
+    except Exception as e:
+        log(f"❌ Feature matrix builder failed: {e}", "err")
+        return None
 
-        col1, col2, col3 = st.columns(3)
+    # ── STEP 5: ML Inference ──────────────────────────────────────────────
+    log("🤖 Loading production XGBoost (V3) artifacts...", "run")
+    try:
+        with open(os.path.join(MODELS_DIR, "best_model_v3.pkl"), "rb") as f:
+            model_pkg = pickle.load(f)
+        with open(os.path.join(MODELS_DIR, "preprocessor_v3.pkl"), "rb") as f:
+            preprocessor = pickle.load(f)
 
-        # ── Pie ─────────────────────────────────────────────────────────
-        with col1:
-            cnt = df["risk_level_name"].value_counts()
-            colors = {"Critical":"#ef4444","High":"#f97316","Medium":"#eab308","Low":"#22c55e"}
-            fig = go.Figure(go.Pie(
-                labels=cnt.index, values=cnt.values,
-                hole=0.6,
-                marker=dict(colors=[colors.get(l,"#6366f1") for l in cnt.index],
-                            line=dict(color="#0a0b0e", width=2)),
-                textfont=dict(color="#f8fafc"),
-            ))
-            fig.update_layout(**PLOTLY_LAYOUT, title="Risk Distribution",
-                              showlegend=True,
-                              legend=dict(font=dict(color="#94a3b8")))
-            st.plotly_chart(fig, use_container_width=True)
+        model = model_pkg["model"]
+        log(f"🤖 Loaded: XGBoost model", "ok")
 
-        # ── Histogram ───────────────────────────────────────────────────
-        with col2:
-            fig2 = px.histogram(
-                df, x="risk_score_val", nbins=20,
-                title="Risk Score Histogram",
-                color_discrete_sequence=["#6366f1"]
-            )
-            fig2.update_layout(**PLOTLY_LAYOUT, xaxis=dict(title="Risk Score", **GRID),
-                               yaxis=dict(title="Files", **GRID))
-            st.plotly_chart(fig2, use_container_width=True)
+        log("🔮 Generating predictions...", "run")
+        result_df = run_inference(feat_df, preprocessor, model)
+        log("🏆 Risk prediction complete!", "ok")
+    except Exception as e:
+        log(f"❌ ML Inference failed: {e}", "err")
+        traceback.print_exc()
+        return None
 
-        # ── Language risk breakdown ──────────────────────────────────────
-        with col3:
-            if "language" in df.columns:
-                lang_risk = df.groupby("language")["risk_score_val"].mean().reset_index()
-                lang_risk.columns = ["Language", "Avg Risk Score"]
-                fig3 = px.bar(lang_risk, x="Language", y="Avg Risk Score",
-                              title="Avg Risk by Language",
-                              color="Avg Risk Score",
-                              color_continuous_scale=["#22c55e","#eab308","#ef4444"])
-                fig3.update_layout(**PLOTLY_LAYOUT,
-                                   xaxis=dict(**GRID), yaxis=dict(**GRID))
-                st.plotly_chart(fig3, use_container_width=True)
-
-        # ── Scatter: Complexity vs Risk Score ────────────────────────────
-        st.markdown('<div class="section-hdr">📈 Complexity vs. Risk Score</div>', unsafe_allow_html=True)
-        fig4 = px.scatter(
-            df, x="complexity", y="risk_score_val",
-            color="risk_level_name",
-            size="loc", size_max=22,
-            hover_data=["file_path","predicted_label","confidence"] if "file_path" in df.columns else [],
-            title="",
-            color_discrete_map={"Critical":"#ef4444","High":"#f97316","Medium":"#eab308","Low":"#22c55e"},
-            opacity=0.8,
-        )
-        fig4.update_layout(**PLOTLY_LAYOUT,
-                           xaxis=dict(title="Cyclomatic Complexity", **GRID),
-                           yaxis=dict(title="Risk Score", **GRID))
-        st.plotly_chart(fig4, use_container_width=True)
-
-    except ImportError:
-        st.info("Install plotly for interactive charts: `pip install plotly`")
-
+    return {"df": result_df, "meta": meta}
 
 # ══════════════════════════════════════════════════════════════════════════════
-# HEATMAP TREE
+# COMPONENT RENDERING
 # ══════════════════════════════════════════════════════════════════════════════
-def render_heatmap_tree(df: pd.DataFrame):
-    if "file_path" not in df.columns:
-        st.info("No file paths available for heatmap."); return
-
-    dot_cls = {"Critical":"dot-critical","High":"dot-high","Medium":"dot-medium","Low":"dot-low"}
-    emoji_m = {"Critical":"🔴","High":"🟠","Medium":"🟡","Low":"🟢"}
-
-    df_sorted = df.sort_values("risk_score_val", ascending=False)
-    folders: dict = {}
-    for _, row in df_sorted.iterrows():
-        fp    = str(row.get("file_path",""))
-        parts = fp.replace("\\","/").split("/")
-        folder = "/".join(parts[:-1]) if len(parts) > 1 else "."
-        fname  = parts[-1]
-        folders.setdefault(folder, []).append((fname, row))
-
-    html_parts = []
-    for folder, files in sorted(folders.items()):
-        html_parts.append(f'<div class="tree-folder">📁 {folder}/</div>')
-        for fname, row in files[:8]:  # max 8 per folder
-            lvl  = row.get("risk_level_name","Low")
-            dc   = dot_cls.get(lvl,"dot-low")
-            sc   = row.get("risk_score_val", 0)
-            conf = float(row.get("confidence",0))
-            pct  = conf*100 if conf <= 1 else conf
-            html_parts.append(
-                f'<div class="tree-file">'
-                f'<div class="risk-dot {dc}"></div>'
-                f'<span style="color:#cbd5e1;">{fname}</span>'
-                f'<span style="color:#475569;margin-left:auto;font-size:0.7rem;">'
-                f'{emoji_m.get(lvl,"")} {sc:.0f} &nbsp; {pct:.0f}%</span>'
-                f'</div>'
-            )
-
-    st.markdown(f'<div class="panel" style="max-height:500px;overflow-y:auto;">{"".join(html_parts)}</div>',
-                unsafe_allow_html=True)
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# MAIN RENDER
-# ══════════════════════════════════════════════════════════════════════════════
-def render_dashboard(df: pd.DataFrame, owner: str, repo_name: str, url: str):
+def render_health_dashboard(df: pd.DataFrame, owner: str, repo_name: str, meta: dict, url: str):
     import plotly.graph_objects as go
+    import plotly.express as px
 
-    hs   = health_score(df)
-    n    = len(df)
-    n_crit  = int((df["risk_level_name"]=="Critical").sum())
-    n_high  = int((df["risk_level_name"]=="High").sum())
-    n_med   = int((df["risk_level_name"]=="Medium").sum())
-    n_low   = int((df["risk_level_name"]=="Low").sum())
-    avg_conf= float(df["confidence"].mean()) * 100
-    avg_cmx = float(df["complexity"].mean()) if "complexity" in df.columns else 0
-    avg_mi  = float(df["maintainability_index"].mean()) if "maintainability_index" in df.columns else 0
-    contribs= int(df["contributor_count"].max()) if "contributor_count" in df.columns else 0
-    avg_freq= float(df["commit_frequency"].mean()) if "commit_frequency" in df.columns else 0
-    repo_age= int(df["repository_age_days"].iloc[0]) if "repository_age_days" in df.columns else 0
-    commits = int(df["commit_count"].sum()) if "commit_count" in df.columns else 0
-    lang    = df["language"].mode()[0] if "language" in df.columns and not df["language"].empty else "python"
+    hs = health_score(df)
+    n_files = len(df)
+    
+    # Calculate distributions
+    n_high = int((df["predicted_risk"] == "HIGH").sum())
+    n_med  = int((df["predicted_risk"] == "MEDIUM").sum())
+    n_low  = int((df["predicted_risk"] == "LOW").sum())
+    avg_conf = float(df["confidence_score"].mean())
+    
+    # Domain overall risk
+    max_risk_level = "LOW"
+    if n_high > 0 or n_med > 0:
+        pct_high = n_high / n_files
+        pct_med  = n_med / n_files
+        if pct_high >= 0.15: max_risk_level = "HIGH"
+        elif pct_high > 0 or pct_med >= 0.3: max_risk_level = "MEDIUM"
 
-    dom_level = df["risk_level_name"].mode()[0] if not df.empty else "Medium"
     banner_cls = {
-        "Critical":"risk-banner-high",
-        "High":"risk-banner-high",
-        "Medium":"risk-banner-medium",
-        "Low":"risk-banner-low"
-    }.get(dom_level, "risk-banner-medium")
+        "HIGH": "risk-banner-high",
+        "MEDIUM": "risk-banner-medium",
+        "LOW": "risk-banner-low"
+    }.get(max_risk_level, "risk-banner-medium")
 
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M UTC")
+    risk_color = {
+        "HIGH": "#ef4444",
+        "MEDIUM": "#f97316",
+        "LOW": "#22c55e"
+    }.get(max_risk_level, "#6366f1")
 
-    # ── TOP HEADER ────────────────────────────────────────────────────────
+    # Header Card
+    primary_lang = df["language"].mode()[0] if "language" in df.columns and len(df) > 0 else "N/A"
+    
     st.markdown(f"""
     <div style="background:#111318;border:1px solid #1e293b;border-radius:16px;padding:1.5rem 2rem;margin-bottom:1.5rem;">
       <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap;">
         <div>
           <div style="font-size:1.5rem;font-weight:800;color:#f8fafc;">
-            {owner} / {repo_name}
-            <a href="{url}" target="_blank" style="font-size:0.85rem;color:#6366f1;margin-left:0.75rem;text-decoration:none;">↗ GitHub</a>
+            🛡️ {owner} / {repo_name}
+            <a href="{url}" target="_blank" style="font-size:0.85rem;color:#6366f1;margin-left:0.75rem;text-decoration:none;">↗ View GitHub</a>
           </div>
           <div style="font-size:0.8rem;color:#64748b;margin-top:0.3rem;">
-            🌐 {lang.title()} &nbsp;|&nbsp; 📅 {repo_age} days old &nbsp;|&nbsp; 
-            👥 {contribs} contributors &nbsp;|&nbsp; 💾 {commits:,} commits &nbsp;|&nbsp;
-            🕐 Analyzed {ts}
+            Primary Language: <b>{primary_lang.upper()}</b> &nbsp;|&nbsp; 
+            Age: <b>{meta.get('repo_age_days', 1)} days</b> &nbsp;|&nbsp; 
+            Contributors: <b>{meta.get('contributor_count', 1)}</b> &nbsp;|&nbsp; 
+            Cloned Commits: <b>{meta.get('total_commits', 0)}</b>
           </div>
-        </div>
-        <div style="margin-left:auto;display:flex;gap:0.75rem;align-items:center;">
-          {badge_html(dom_level)}
-          <span style="background:#1e293b;color:#94a3b8;padding:4px 12px;border-radius:999px;font-size:0.72rem;font-weight:600;">
-            Trust {avg_conf:.0f}%
-          </span>
         </div>
       </div>
     </div>
     """, unsafe_allow_html=True)
 
-    # ── EXECUTIVE RISK BANNER ─────────────────────────────────────────────
-    banner_emoji = {"Critical":"🔴","High":"🟠","Medium":"🟡","Low":"🟢"}.get(dom_level,"⚪")
-    risk_color   = {"Critical":"#ef4444","High":"#f97316","Medium":"#eab308","Low":"#22c55e"}.get(dom_level,"#6366f1")
-
+    # Risk Banner
     st.markdown(f"""
     <div class="risk-banner {banner_cls}">
       <div>
-        <div style="font-size:0.7rem;font-weight:700;color:rgba(255,255,255,0.5);letter-spacing:0.15em;
-                    text-transform:uppercase;margin-bottom:0.5rem;">OVERALL REPOSITORY RISK</div>
-        <div class="risk-label" style="color:{risk_color};">{banner_emoji} {dom_level.upper()} RISK</div>
+        <div style="font-size:0.7rem;font-weight:700;color:rgba(255,255,255,0.5);letter-spacing:0.15em;text-transform:uppercase;margin-bottom:0.5rem;">OVERALL REPOSITORY RISK PROFILE</div>
+        <div class="risk-label" style="color:{risk_color};">{risk_emoji(max_risk_level == 'HIGH' and 'Critical' or (max_risk_level == 'MEDIUM' and 'High' or 'Low'))} {max_risk_level} RISK</div>
         <div style="font-size:0.85rem;color:rgba(255,255,255,0.55);margin-top:0.5rem;">
-          {n_crit} Critical &nbsp;·&nbsp; {n_high} High &nbsp;·&nbsp; {n_med} Medium &nbsp;·&nbsp; {n_low} Low
+          Classified by V3 XGBoost model based on code quality & developer dynamics
         </div>
       </div>
       <div style="display:flex;gap:2rem;">
@@ -694,28 +780,32 @@ def render_dashboard(df: pd.DataFrame, owner: str, repo_name: str, url: str):
           <div class="health-sub">Health Score<br>/100</div>
         </div>
         <div class="health-ring">
-          <div class="health-score" style="color:#6366f1;">{avg_conf:.0f}%</div>
-          <div class="health-sub">Trust<br>Score</div>
+          <div class="health-score" style="color:#6366f1;">{avg_conf * 100:.0f}%</div>
+          <div class="health-sub">Avg Confidence</div>
         </div>
       </div>
     </div>
     """, unsafe_allow_html=True)
 
-    # ── KEY METRICS ────────────────────────────────────────────────────────
-    st.markdown('<div class="section-hdr">📊 Key Metrics</div>', unsafe_allow_html=True)
-    metrics = [
-        ("📁", n,           "Files Analyzed"),
-        ("🔴", n_crit,      "Critical Files"),
-        ("🟠", n_high,      "High Risk Files"),
-        ("🟡", n_med,       "Medium Risk Files"),
-        ("🟢", n_low,       "Low Risk Files"),
-        ("🔀", f"{avg_cmx:.1f}", "Avg Complexity"),
-        ("📐", f"{avg_mi:.0f}", "Avg Maintainability"),
-        ("👥", contribs,    "Max Contributors"),
-        ("⚡", f"{avg_freq:.3f}", "Avg Commit Freq"),
+    # Metrics grid
+    st.markdown('<div class="section-hdr">📊 Key Indicators</div>', unsafe_allow_html=True)
+    avg_loc = df["loc"].mean() if "loc" in df.columns else 0
+    avg_cc  = df["complexity"].mean() if "complexity" in df.columns else 0
+    avg_mi  = df["maintainability_index"].mean() if "maintainability_index" in df.columns else 50
+    bus_factor = meta.get("bus_factor", 1)
+
+    indicators = [
+        ("📁", f"{n_files:,}", "Files Analyzed"),
+        ("🔴", f"{n_high:,}", "HIGH Risk Files"),
+        ("🟡", f"{n_med:,}", "MEDIUM Risk Files"),
+        ("🟢", f"{n_low:,}", "LOW Risk Files"),
+        ("👥", f"{meta.get('contributor_count', 1)}", "Team Size"),
+        ("🚌", f"{bus_factor}", "Bus Factor"),
+        ("🔀", f"{avg_cc:.1f}", "Avg Complexity"),
+        ("📐", f"{avg_mi:.1f}", "Avg Maintainability"),
     ]
-    cols = st.columns(len(metrics))
-    for col, (icon, val, lbl) in zip(cols, metrics):
+    cols = st.columns(len(indicators))
+    for col, (icon, val, lbl) in zip(cols, indicators):
         with col:
             st.markdown(f"""
             <div class="metric-card">
@@ -726,378 +816,461 @@ def render_dashboard(df: pd.DataFrame, owner: str, repo_name: str, url: str):
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── TWO-COLUMN LAYOUT ─────────────────────────────────────────────────
-    left, right = st.columns([1.1, 0.9])
-
-    # ── TOP CRITICAL FILES ──────────────────────────────────────────────
-    with left:
-        st.markdown('<div class="section-hdr">🚨 Top Critical Files</div>', unsafe_allow_html=True)
-        top_files = df.sort_values("risk_score_val", ascending=False).head(10)
-        for _, row in top_files.iterrows():
-            lvl    = row.get("risk_level_name","Low")
-            sc     = row.get("risk_score_val",0)
-            fp     = str(row.get("file_path",""))
-            drivers= risk_drivers(row)
-            score_color = {"Critical":"#ef4444","High":"#f97316","Medium":"#eab308","Low":"#22c55e"}.get(lvl,"#6366f1")
-            short_path = ("…" + fp[-55:]) if len(fp) > 55 else fp
-            st.markdown(f"""
-            <div class="crit-row">
-              <div class="crit-score" style="background:{score_color};">{sc:.0f}</div>
-              <div style="min-width:0;">
-                <div class="crit-path">{short_path}</div>
-                <div class="crit-reasons">⚠️ {' &nbsp;·&nbsp; '.join(drivers)}</div>
-                <div style="margin-top:0.35rem;">{badge_html(lvl)} &nbsp; {trust_html(float(row.get('confidence',0)))}</div>
-              </div>
-            </div>""", unsafe_allow_html=True)
-
-    # ── HEATMAP TREE ─────────────────────────────────────────────────────
-    with right:
-        st.markdown('<div class="section-hdr">🗺️ Repository Risk Heatmap</div>', unsafe_allow_html=True)
-        render_heatmap_tree(df)
-
-    # ── CHARTS ────────────────────────────────────────────────────────────
-    st.markdown('<div class="section-hdr" style="margin-top:1.5rem;">📈 Risk Analytics</div>',
-                unsafe_allow_html=True)
-    render_charts(df)
-
-    # ── INTERACTIVE FILE RISK TABLE ───────────────────────────────────────
-    st.markdown('<div class="section-hdr" style="margin-top:1.5rem;">📋 File Risk Intelligence Center</div>',
-                unsafe_allow_html=True)
-
-    # Search / Filter controls
-    fc1, fc2, fc3, fc4 = st.columns([2, 1.2, 1, 1])
-    with fc1:
-        search = st.text_input("🔍 Search files or folders", placeholder="e.g. auth, payment, app.py", label_visibility="collapsed")
-    with fc2:
-        risk_filter = st.multiselect("Risk Level", ["Critical","High","Medium","Low"],
-                                     default=["Critical","High","Medium","Low"], label_visibility="collapsed")
-    with fc3:
-        lang_opts = sorted(df["language"].unique().tolist()) if "language" in df.columns else []
-        lang_filter = st.multiselect("Language", lang_opts, default=lang_opts, label_visibility="collapsed")
-    with fc4:
-        conf_filter = st.select_slider("Min Confidence", [0,50,60,70,80,90], value=0, label_visibility="collapsed")
-
-    df_filtered = df.copy()
-    if search:
-        df_filtered = df_filtered[df_filtered["file_path"].str.contains(search, case=False, na=False)]
-    if risk_filter:
-        df_filtered = df_filtered[df_filtered["risk_level_name"].isin(risk_filter)]
-    if lang_filter:
-        df_filtered = df_filtered[df_filtered["language"].isin(lang_filter)]
-    df_filtered = df_filtered[df_filtered["confidence"] * 100 >= conf_filter]
-
-    display_cols = {
-        "file_path": "File Path",
-        "language": "Language",
-        "risk_score_val": "Risk Score",
-        "risk_level_name": "Risk Level",
-        "confidence": "Confidence",
-        "loc": "LOC",
-        "complexity": "Complexity",
-        "maintainability_index": "Maintainability",
-        "commit_count": "Commits",
-        "modification_count": "Modifications",
-        "contributor_count": "Contributors",
-    }
-    available = {k: v for k, v in display_cols.items() if k in df_filtered.columns}
-    df_show = df_filtered[list(available.keys())].rename(columns=available)
-    df_show = df_show.sort_values("Risk Score", ascending=False).reset_index(drop=True)
-    df_show.index += 1
-    df_show["Confidence"] = (df_show["Confidence"] * 100).round(1).astype(str) + "%"
-    df_show["Risk Score"] = df_show["Risk Score"].round(1)
-
-    st.dataframe(
-        df_show,
-        use_container_width=True,
-        height=420,
-    )
-
-    # ── FILE DETAIL PANEL ─────────────────────────────────────────────────
-    st.markdown('<div class="section-hdr" style="margin-top:1rem;">🔎 File Detail Inspector</div>',
-                unsafe_allow_html=True)
-    file_paths = df_filtered["file_path"].tolist() if "file_path" in df_filtered.columns else []
-    if file_paths:
-        sel = st.selectbox("Select a file to inspect", file_paths, label_visibility="collapsed")
-        row = df[df["file_path"] == sel].iloc[0] if not df[df["file_path"] == sel].empty else None
-        if row is not None:
-            lvl = row.get("risk_level_name","Low")
-            sc  = float(row.get("risk_score_val",0))
-            conf= float(row.get("confidence",0))
-            color = {"Critical":"#ef4444","High":"#f97316","Medium":"#eab308","Low":"#22c55e"}.get(lvl,"#6366f1")
-            drivers = risk_drivers(row)
-
-            d1, d2, d3 = st.columns([1.5,1,1])
-            with d1:
-                st.markdown(f"""
-                <div class="panel">
-                  <div class="panel-title">📄 {sel.split('/')[-1]}</div>
-                  <div style="font-family:monospace;font-size:0.72rem;color:#64748b;word-break:break-all;">{sel}</div>
-                  <hr style="margin:0.75rem 0;">
-                  <div style="display:flex;justify-content:space-between;margin-bottom:0.5rem;">
-                    <span style="color:#94a3b8;font-size:0.8rem;">Risk Score</span>
-                    <span style="color:{color};font-weight:800;font-size:1.1rem;">{sc:.0f}/100</span>
-                  </div>
-                  <div style="display:flex;justify-content:space-between;margin-bottom:0.5rem;">
-                    <span style="color:#94a3b8;font-size:0.8rem;">Risk Level</span>
-                    {badge_html(lvl)}
-                  </div>
-                  <div style="display:flex;justify-content:space-between;">
-                    <span style="color:#94a3b8;font-size:0.8rem;">Trust Gate</span>
-                    {trust_html(conf)}
-                  </div>
-                </div>""", unsafe_allow_html=True)
-
-            with d2:
-                fields = [
-                    ("Lines of Code",   f"{int(row.get('loc',0)):,}"),
-                    ("Complexity",      f"{float(row.get('complexity',0)):.1f}"),
-                    ("Maintainability", f"{float(row.get('maintainability_index',0)):.1f}"),
-                    ("Commit Count",    f"{int(row.get('commit_count',0)):,}"),
-                    ("Modifications",   f"{int(row.get('modification_count',0)):,}"),
-                    ("Contributors",    f"{int(row.get('contributor_count',0)):,}"),
-                ]
-                html = '<div class="panel"><div class="panel-title">📊 Code Metrics</div>'
-                for lbl2, val2 in fields:
-                    html += f"""
-                    <div style="display:flex;justify-content:space-between;padding:0.35rem 0;
-                                border-bottom:1px solid #1e293b;">
-                      <span style="color:#64748b;font-size:0.8rem;">{lbl2}</span>
-                      <span style="color:#f8fafc;font-weight:600;font-size:0.85rem;">{val2}</span>
-                    </div>"""
-                html += "</div>"
-                st.markdown(html, unsafe_allow_html=True)
-
-            with d3:
-                html = '<div class="panel"><div class="panel-title">⚠️ Top Risk Drivers</div>'
-                for d in drivers:
-                    html += f"""
-                    <div style="display:flex;align-items:center;gap:0.5rem;padding:0.5rem 0;
-                                border-bottom:1px solid #1e293b;">
-                      <span style="color:#ef4444;">▶</span>
-                      <span style="color:#e2e8f0;font-size:0.82rem;">{d}</span>
-                    </div>"""
-                html += "</div>"
-                st.markdown(html, unsafe_allow_html=True)
-
-    # ── EXPLAINABILITY ─────────────────────────────────────────────────────
-    st.markdown('<div class="section-hdr" style="margin-top:1.5rem;">🧠 Explainability & Feature Importance</div>',
-                unsafe_allow_html=True)
-    try:
-        rf_path = os.path.join(BASE, "models", "random_forest.pkl")
-        preproc_path = os.path.join(BASE, "models", "preprocessor.pkl")
-        from ml.preprocessing import CodeRiskPreprocessor
-        preprocessor = CodeRiskPreprocessor.load(preproc_path)
-        with open(rf_path, "rb") as f: rf_model = pickle.load(f)
-        feat_names = preprocessor.feature_names
-        importances = rf_model.feature_importances_
-
-        df_imp = pd.DataFrame({"Feature": feat_names, "Importance": importances})
-        df_imp = df_imp.sort_values("Importance", ascending=True).tail(10)
-
-        import plotly.graph_objects as go
-        fig = go.Figure(go.Bar(
-            x=df_imp["Importance"], y=df_imp["Feature"],
-            orientation="h",
-            marker=dict(
-                color=df_imp["Importance"],
-                colorscale=[[0,"#1e293b"],[0.5,"#6366f1"],[1,"#8b5cf6"]],
-                line=dict(width=0)
-            ),
-            text=[f"{v:.3f}" for v in df_imp["Importance"]],
-            textposition="outside",
-            textfont=dict(color="#94a3b8"),
+    # Plotly Visualizations
+    col1, col2 = st.columns(2)
+    with col1:
+        # Pie chart
+        cnt = pd.Series({"HIGH": n_high, "MEDIUM": n_med, "LOW": n_low})
+        colors = {"HIGH": "#ef4444", "MEDIUM": "#f97316", "LOW": "#22c55e"}
+        fig = go.Figure(go.Pie(
+            labels=cnt.index, values=cnt.values,
+            hole=0.5,
+            marker=dict(colors=[colors[k] for k in cnt.index], line=dict(color="#0a0b0e", width=2)),
+            textfont=dict(color="#f8fafc")
         ))
         fig.update_layout(
-            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
             font=dict(family="Inter", color="#94a3b8"),
-            margin=dict(l=0,r=60,t=10,b=0),
-            height=320,
-            xaxis=dict(gridcolor="#1e293b",zerolinecolor="#1e293b",title="Gini Importance"),
-            yaxis=dict(gridcolor="#1e293b",tickfont=dict(size=11)),
+            margin=dict(l=0, r=0, t=30, b=0),
+            title="Risk Classification breakdown",
+            showlegend=True,
+            legend=dict(font=dict(color="#94a3b8"))
         )
         st.plotly_chart(fig, use_container_width=True)
-    except Exception:
-        st.info("Explainability chart requires the trained model files.")
 
-    # ── EXECUTIVE SUMMARY ─────────────────────────────────────────────────
-    st.markdown('<div class="section-hdr" style="margin-top:1.5rem;">📋 Executive Summary</div>',
-                unsafe_allow_html=True)
-    top5_crit = df.sort_values("risk_score_val", ascending=False).head(5)
-    tech_debt  = df.sort_values("maintainability_index").head(5) if "maintainability_index" in df.columns else df.head(5)
-    maint_risk = df.sort_values("complexity", ascending=False).head(5) if "complexity" in df.columns else df.head(5)
+    with col2:
+        # Risk Score distribution bar chart (histogram)
+        fig2 = px.histogram(
+            df, x="risk_score_val", nbins=20,
+            title="File Risk Score Profile",
+            color_discrete_sequence=["#6366f1"]
+        )
+        fig2.update_layout(
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(family="Inter", color="#94a3b8"),
+            margin=dict(l=0, r=0, t=30, b=0),
+            xaxis=dict(title="File Risk Score (0-100)", gridcolor="#1e293b", zerolinecolor="#1e293b"),
+            yaxis=dict(title="File Count", gridcolor="#1e293b", zerolinecolor="#1e293b")
+        )
+        st.plotly_chart(fig2, use_container_width=True)
+
+def render_interactive_table(df: pd.DataFrame):
+    st.markdown('<div class="section-hdr">📋 Top High-Risk Files</div>', unsafe_allow_html=True)
+    
+    # Filter panels
+    c1, c2, c3 = st.columns([2, 1, 1])
+    with c1:
+        search = st.text_input("🔍 Search File Path", placeholder="e.g. models/, api.py, routes", label_visibility="collapsed")
+    with c2:
+        risk_opts = ["HIGH", "MEDIUM", "LOW"]
+        risk_sel = st.multiselect("Risk Class", risk_opts, default=risk_opts, label_visibility="collapsed")
+    with c3:
+        lang_opts = sorted(df["language"].unique().tolist()) if "language" in df.columns else []
+        lang_sel = st.multiselect("Language Filter", lang_opts, default=lang_opts, label_visibility="collapsed")
+
+    # Filter dataframe
+    df_f = df.copy()
+    if search:
+        df_f = df_f[df_f["file_path"].str.contains(search, case=False, na=False)]
+    if risk_sel:
+        df_f = df_f[df_f["predicted_risk"].isin(risk_sel)]
+    if lang_sel:
+        df_f = df_f[df_f["language"].isin(lang_sel)]
+
+    # Dynamic sort
+    df_f = df_f.sort_values(by=["risk_score_val", "confidence_score"], ascending=[False, False])
+    
+    # Interactive view
+    cols_to_show = {
+        "file_path": "File Path",
+        "predicted_risk": "Risk Class",
+        "risk_score_val": "Risk Score",
+        "confidence_score": "Confidence",
+        "complexity": "Complexity",
+        "maintainability_index": "Maintainability",
+        "modification_count": "Modifications",
+        "loc": "LOC",
+        "contributor_count": "Contributors"
+    }
+    
+    available_cols = [c for c in cols_to_show.keys() if c in df_f.columns]
+    df_display = df_f[available_cols].copy().rename(columns=cols_to_show)
+    df_display["Confidence"] = (df_display["Confidence"] * 100).round(1).astype(str) + "%"
+    df_display["Risk Score"] = df_display["Risk Score"].round(1)
+    df_display = df_display.reset_index(drop=True)
+    df_display.index += 1
+
+    st.dataframe(df_display, use_container_width=True, height=350)
+    return df_f
+
+def render_file_explainer(df: pd.DataFrame):
+    st.markdown('<div class="section-hdr">🔎 File Risk Explainer</div>', unsafe_allow_html=True)
+    
+    file_paths = df["file_path"].tolist() if "file_path" in df.columns else []
+    if not file_paths:
+        st.info("No files found to inspect.")
+        return
+        
+    selected_file = st.selectbox("Select a file to inspect details", file_paths, label_visibility="collapsed")
+    
+    # Get row details
+    row = df[df["file_path"] == selected_file].iloc[0]
+    risk_class = row["predicted_risk"]
+    conf = row["confidence_score"]
+    score = row["risk_score_val"]
+    
+    color = {"HIGH": "#ef4444", "MEDIUM": "#f97316", "LOW": "#22c55e"}.get(risk_class, "#6366f1")
+
+    # Positives/Negatives Drivers
+    pos_drivers = []
+    neg_drivers = []
+
+    # LOC Driver
+    loc = int(row.get("loc", 0))
+    if loc > 500: pos_drivers.append(f"Lines of Code is extremely high ({loc:,} lines)")
+    elif loc < 50: neg_drivers.append(f"Compact file footprint ({loc:,} lines)")
+
+    # Complexity Driver
+    cc = float(row.get("complexity", 1))
+    if cc > 25: pos_drivers.append(f"Cyclomatic complexity is elevated ({cc:.0f})")
+    elif cc < 5: neg_drivers.append(f"Simple control flow structures ({cc:.0f})")
+
+    # Maintainability Driver
+    mi = float(row.get("maintainability_index", 50))
+    if mi < 40: pos_drivers.append(f"Maintainability Index is critically low ({mi:.1f})")
+    elif mi > 75: neg_drivers.append(f"Excellent Maintainability score ({mi:.1f})")
+
+    # Modifications Driver
+    mods = int(row.get("modification_count", 0))
+    if mods > 15: pos_drivers.append(f"High modification frequency ({mods} changes)")
+    elif mods < 3: neg_drivers.append(f"Stable codebase addition ({mods} modifications)")
+
+    # Ownership concentration
+    own = float(row.get("ownership_concentration", 1.0))
+    if own > 0.8: pos_drivers.append(f"High ownership concentration ({own * 100:.0f}%) — single dev dominance")
+    elif own < 0.4: neg_drivers.append(f"Distributed module updates (concentration is {own * 100:.0f}%)")
+
+    # Fallbacks if list is empty
+    if not pos_drivers: pos_drivers.append("No critical positive risk drivers observed")
+    if not neg_drivers: neg_drivers.append("No critical negative risk drivers observed")
+
+    # Build human explanation
+    explanation = f"This file is classified as <b>{risk_class}</b> risk because:"
+    
+    # Render layout
+    d1, d2, d3 = st.columns([1.5, 1, 1])
+    with d1:
+        st.markdown(f"""
+        <div class="panel">
+          <div class="panel-title">📄 {selected_file.split('/')[-1]}</div>
+          <div style="font-family:monospace;font-size:0.75rem;color:#64748b;word-break:break-all;">{selected_file}</div>
+          <hr style="margin:0.75rem 0;">
+          <div style="display:flex;justify-content:space-between;margin-bottom:0.5rem;">
+            <span style="color:#94a3b8;font-size:0.8rem;">Risk Score</span>
+            <span style="color:{color};font-weight:800;font-size:1.1rem;">{score:.0f}/100</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;margin-bottom:0.5rem;">
+            <span style="color:#94a3b8;font-size:0.8rem;">Risk Class</span>
+            {badge_html(risk_class == 'HIGH' and 'Critical' or (risk_class == 'MEDIUM' and 'High' or 'Low'))}
+          </div>
+          <div style="display:flex;justify-content:space-between;">
+            <span style="color:#94a3b8;font-size:0.8rem;">Trust Gate Level</span>
+            {trust_html(conf)}
+          </div>
+        </div>""", unsafe_allow_html=True)
+
+    with d2:
+        fields = [
+            ("Lines of Code", f"{int(row.get('loc',0)):,}"),
+            ("Complexity", f"{float(row.get('complexity',0)):.1f}"),
+            ("Maintainability", f"{float(row.get('maintainability_index',0)):.1f}"),
+            ("Commit Count", f"{int(row.get('commit_count',0)):,}"),
+            ("Modifications", f"{int(row.get('modification_count',0)):,}"),
+            ("Contributors", f"{int(row.get('contributor_count',0)):,}"),
+        ]
+        html = '<div class="panel"><div class="panel-title">📊 File Code Metrics</div>'
+        for lbl2, val2 in fields:
+            html += f"""
+            <div style="display:flex;justify-content:space-between;padding:0.35rem 0;border-bottom:1px solid #1e293b;">
+              <span style="color:#64748b;font-size:0.8rem;">{lbl2}</span>
+              <span style="color:#f8fafc;font-weight:600;font-size:0.85rem;">{val2}</span>
+            </div>"""
+        html += "</div>"
+        st.markdown(html, unsafe_allow_html=True)
+
+    with d3:
+        html = '<div class="panel"><div class="panel-title">🛡️ Critical Risk Drivers</div>'
+        html += '<div style="font-size:0.75rem;color:#ef4444;font-weight:700;margin-bottom:0.3rem;">Positive Drivers (Increases Risk):</div>'
+        for d in pos_drivers[:3]:
+            html += f'<div style="font-size:0.75rem;color:#cbd5e1;margin-bottom:0.25rem;">• {d}</div>'
+        html += '<div style="font-size:0.75rem;color:#22c55e;font-weight:700;margin-top:0.6rem;margin-bottom:0.3rem;">Negative Drivers (Reduces Risk):</div>'
+        for d in neg_drivers[:3]:
+            html += f'<div style="font-size:0.75rem;color:#cbd5e1;margin-bottom:0.25rem;">• {d}</div>'
+        html += "</div>"
+        st.markdown(html, unsafe_allow_html=True)
+
+def render_tech_debt_hotspots(df: pd.DataFrame):
+    st.markdown('<div class="section-hdr">🔥 Technical Debt Hotspots</div>', unsafe_allow_html=True)
+    st.markdown('<div style="font-size:0.8rem;color:#64748b;margin-bottom:0.75rem;">Top 25 Refactoring Candidates ranked by Risk Score & Priority.</div>', unsafe_allow_html=True)
+    
+    # Sort and rank top 25 candidate refactoring files
+    top25 = df.sort_values(by="risk_score_val", ascending=False).head(25).copy().reset_index(drop=True)
+    
+    hot_headers = [
+        Paragraph("<b>Rank</b>", ParagraphStyle('H', fontSize=9, textColor=colors.HexColor('#94a3b8'))),
+        Paragraph("<b>File Path</b>", ParagraphStyle('H', fontSize=9, textColor=colors.HexColor('#94a3b8'))),
+        Paragraph("<b>Risk Score</b>", ParagraphStyle('H', fontSize=9, textColor=colors.HexColor('#94a3b8'))),
+        Paragraph("<b>Confidence</b>", ParagraphStyle('H', fontSize=9, textColor=colors.HexColor('#94a3b8'))),
+        Paragraph("<b>Priority</b>", ParagraphStyle('H', fontSize=9, textColor=colors.HexColor('#94a3b8')))
+    ]
+    
+    # Build dataframe for presentation
+    hotspots_df = []
+    for idx, (_, row) in enumerate(top25.iterrows(), 1):
+        priority = row["tech_debt_priority"]
+        hotspots_df.append({
+            "Rank": idx,
+            "File Path": row["file_path"],
+            "Risk Score": row["risk_score_val"],
+            "Confidence": f"{row['confidence_score'] * 100:.1f}%",
+            "Technical Debt Priority": priority
+        })
+        
+    st.dataframe(pd.DataFrame(hotspots_df).set_index("Rank"), use_container_width=True, height=350)
+
+def render_trust_gate_details(df: pd.DataFrame):
+    st.markdown('<div class="section-hdr">🔒 Trust Gate Assessment</div>', unsafe_allow_html=True)
+    
+    # Calculate file-level trust
+    confs = df["confidence_score"] * 100
+    n_high = (confs >= 90).sum()
+    n_good = ((confs >= 80) & (confs < 90)).sum()
+    n_mod  = ((confs >= 70) & (confs < 80)).sum()
+    n_rev  = (confs < 70).sum()
+    total = len(df)
+    
+    avg_conf = confs.mean()
+    gate_level = trust_level(avg_conf)
+    
+    t1, t2 = st.columns([1, 1])
+    with t1:
+        st.markdown(f"""
+        <div class="panel">
+          <div class="panel-title">Verification Outcome</div>
+          <div style="font-size:1.6rem;font-weight:900;color:#f8fafc;margin-bottom:0.5rem;">{gate_level}</div>
+          <div style="font-size:0.8rem;color:#64748b;">
+            Calculated across all predicted files. Trust represents the model's confidence in identifying file risk structures.
+          </div>
+          <hr style="margin:1rem 0;">
+          <div style="display:flex;justify-content:space-between;margin-bottom:0.4rem;font-size:0.85rem;">
+            <span>Average Prediction Confidence:</span>
+            <b>{avg_conf:.1f}%</b>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    with t2:
+        trust_table = pd.DataFrame([
+            {"Trust Bin": "HIGH TRUST (≥90%)", "Files": f"{n_high:,}", "Pct": f"{n_high/total*100:.1f}%"},
+            {"Trust Bin": "GOOD TRUST (80-90%)", "Files": f"{n_good:,}", "Pct": f"{n_good/total*100:.1f}%"},
+            {"Trust Bin": "MODERATE TRUST (70-80%)", "Files": f"{n_mod:,}", "Pct": f"{n_mod/total*100:.1f}%"},
+            {"Trust Bin": "MANUAL REVIEW (<70%)", "Files": f"{n_rev:,}", "Pct": f"{n_rev/total*100:.1f}%"},
+        ])
+        st.dataframe(trust_table.set_index("Trust Bin"), use_container_width=True)
+
+def render_repo_similarity(df: pd.DataFrame, repo_name: str):
+    st.markdown('<div class="section-hdr">🤝 Repository Similarity Mapping</div>', unsafe_allow_html=True)
+    
+    centroids = get_training_centroids()
+    if centroids is None:
+        st.info("Training dataset (`ml_dataset_v3.csv`) not found — similarity mapping unavailable.")
+        return
+        
+    # Compute analyzed repo centroid
+    ext_centroid = df[NUM_FEATS].mean().values.reshape(1, -1)
+    
+    sims = {}
+    for t_repo in centroids.index:
+        t_vec = centroids.loc[t_repo].values.reshape(1, -1)
+        sim = cosine_similarity(ext_centroid, t_vec)[0][0]
+        sims[t_repo] = round(float(sim), 4)
+        
+    top3 = sorted(sims.items(), key=lambda x: x[1], reverse=True)[:3]
+    
+    s1, s2 = st.columns([1, 1.2])
+    with s1:
+        st.markdown(f"""
+        <div class="panel">
+          <div class="panel-title">Similarity Analysis</div>
+          <div style="font-size:0.8rem;color:#64748b;margin-bottom:0.75rem;">
+            This comparison calculates similarity against the 22 software engineering repositories in the model's training set. 
+            Highly similar training profiles indicate prediction patterns are highly aligned with verified baselines.
+          </div>
+          <hr style="margin:0.75rem 0;">
+          <div style="font-size:0.85rem;color:#a0aec0;">
+            Prediction Reliability: <b>{"HIGH" if top3[0][1] >= 0.85 else "MODERATE"}</b>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    with s2:
+        sim_table = pd.DataFrame([
+            {"Rank": i+1, "Similar Training Repo": name, "Cosine Similarity": f"{val * 100:.1f}%"}
+            for i, (name, val) in enumerate(top3)
+        ])
+        st.dataframe(sim_table.set_index("Rank"), use_container_width=True)
+    return pd.DataFrame([
+        {"external_repo": repo_name, "rank": i+1, "similar_training_repo": name, "cosine_similarity": val}
+        for i, (name, val) in enumerate(top3)
+    ])
+
+def render_executive_summary(df: pd.DataFrame, owner: str, repo_name: str, meta: dict, sim_df: pd.DataFrame):
+    st.markdown('<div class="section-hdr">📋 Executive Assessment & Recommendations</div>', unsafe_allow_html=True)
+    
+    hs = health_score(df)
+    n_files = len(df)
+    n_high = int((df["predicted_risk"] == "HIGH").sum())
+    n_med  = int((df["predicted_risk"] == "MEDIUM").sum())
+    
+    # Model average conf
+    avg_conf = float(df["confidence_score"].mean())
+    gate_level = trust_level(avg_conf)
+    
+    # Top critical file
+    top1 = df.sort_values(by="risk_score_val", ascending=False).iloc[0] if len(df) > 0 else None
+    top1_path = top1["file_path"].split('/')[-1] if top1 is not None else "N/A"
+    top1_score = top1["risk_score_val"] if top1 is not None else 0
+    
+    # Recommendations text
+    recommendations = []
+    if n_high > 0:
+        recommendations.append(f"Refactor the top flagged candidates (specifically <b>{top1_path}</b> with a critical score of {top1_score:.0f}).")
+    if meta.get("bus_factor", 1) <= 2:
+        recommendations.append("Distribute knowledge: core developer ownership concentration is high, exposing the team to a high bus factor risk.")
+    recommendations.append("Continuous checks: Integrate file risk analysis checks in the pull-request pipeline to safeguard new changes.")
 
     e1, e2, e3 = st.columns(3)
-    for col2, title, sub_df, icon in [
-        (e1, "Top 5 Critical Files",       top5_crit, "🔴"),
-        (e2, "Top 5 Technical Debt",        tech_debt, "🔧"),
-        (e3, "Top 5 Maintenance Risks",     maint_risk, "⚠️"),
-    ]:
-        with col2:
-            html = f'<div class="panel"><div class="panel-title">{icon} {title}</div>'
-            for i, (_, r) in enumerate(sub_df.iterrows(), 1):
-                fp = str(r.get("file_path","")).split("/")[-1]
-                sc = float(r.get("risk_score_val",0))
-                color = {"Critical":"#ef4444","High":"#f97316","Medium":"#eab308","Low":"#22c55e"}.get(
-                    r.get("risk_level_name","Low"),"#6366f1")
-                html += f"""
-                <div style="display:flex;align-items:center;gap:0.5rem;padding:0.5rem 0;
-                            border-bottom:1px solid #1e293b;">
-                  <span style="color:{color};font-weight:800;font-size:0.9rem;min-width:1.5rem;">{i}.</span>
-                  <div style="min-width:0;">
-                    <div style="font-size:0.78rem;color:#e2e8f0;font-family:monospace;
-                                overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{fp}</div>
-                    <div style="font-size:0.7rem;color:#64748b;">Score: {sc:.0f}</div>
-                  </div>
-                </div>"""
-            html += "</div>"
-            st.markdown(html, unsafe_allow_html=True)
-
-    # ── DOWNLOADS ─────────────────────────────────────────────────────────
-    st.markdown('<div class="section-hdr" style="margin-top:1.5rem;">⬇️ Download Reports</div>',
-                unsafe_allow_html=True)
-    dl1, dl2, dl3, dl4 = st.columns(4)
-
-    # Full CSV
-    with dl1:
-        csv_full = df.to_csv(index=False).encode()
-        st.download_button("📊 Full Prediction CSV", csv_full,
-                           file_name=f"{repo_name}_predictions.csv", mime="text/csv",
-                           use_container_width=True)
-
-    # High-risk CSV
-    with dl2:
-        df_hr = df[df["risk_level_name"].isin(["Critical","High"])]
-        csv_hr = df_hr.to_csv(index=False).encode()
-        st.download_button("🔴 High Risk Files CSV", csv_hr,
-                           file_name=f"{repo_name}_high_risk.csv", mime="text/csv",
-                           use_container_width=True)
-
-    # Executive summary markdown
-    with dl3:
-        exec_md = f"""# Repository Risk Intelligence — Executive Summary
-
-Repository: {owner}/{repo_name}
-Generated: {ts}
-
-## Health Score: {hs}/100
-## Trust Score: {avg_conf:.0f}%
-## Overall Risk: {dom_level}
-
-## Risk Distribution
-- Critical: {n_crit}
-- High: {n_high}
-- Medium: {n_med}
-- Low: {n_low}
-
-## Top 5 Critical Files
-""" + "\n".join([f"{i+1}. {r['file_path']} (Score: {r['risk_score_val']:.0f})"
-                  for i, (_, r) in enumerate(top5_crit.iterrows())])
-        st.download_button("📄 Executive Summary", exec_md.encode(),
-                           file_name=f"{repo_name}_executive_summary.md",
-                           mime="text/markdown", use_container_width=True)
-
-    # Trust gate CSV
-    with dl4:
-        df_trust = df[["file_path","risk_level_name","confidence","risk_score_val"]].copy() if "file_path" in df.columns else df.copy()
-        df_trust["trust_decision"] = df_trust["confidence"].apply(
-            lambda c: "TRUSTED" if c*100 >= 70 else "FLAGGED")
-        csv_trust = df_trust.to_csv(index=False).encode()
-        st.download_button("🔒 Trust Gate CSV", csv_trust,
-                           file_name=f"{repo_name}_trust_gate.csv", mime="text/csv",
-                           use_container_width=True)
-
+    with e1:
+        st.markdown(f"""
+        <div class="panel">
+          <div class="panel-title">🛡️ Risk Assessment Summary</div>
+          <div style="font-size:0.85rem;line-height:1.5;color:#cbd5e1;">
+            • Health Score: <b>{hs}/100</b><br>
+            • Risk Distribution: <b>{n_high:,} HIGH</b>, <b>{n_med:,} MEDIUM</b> files<br>
+            • Trust Classification: <b>{gate_level}</b><br>
+            • Codebase Scale: <b>{n_files:,} files analyzed</b>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    with e2:
+        st.markdown(f"""
+        <div class="panel">
+          <div class="panel-title">🔥 Critical Technical Debt Areas</div>
+          <div style="font-size:0.85rem;line-height:1.5;color:#cbd5e1;">
+            • Most Critical Refactoring Target:<br>&nbsp;&nbsp;<span style="color:#ef4444;font-family:monospace;font-size:0.75rem;">{top1_path} ({top1_score:.0f} Risk)</span><br>
+            • Top similarity reference match:<br>&nbsp;&nbsp;<b>{sim_df.iloc[0]['similar_training_repo'] if sim_df is not None and not sim_df.empty else 'N/A'} ({sim_df.iloc[0]['cosine_similarity']*100:.1f}% Similarity)</b>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    with e3:
+        rec_html = f"""<div class="panel"><div class="panel-title">💡 Strategic Next Steps</div>
+        <div style="font-size:0.8rem;line-height:1.4;color:#cbd5e1;">"""
+        for r in recommendations:
+            rec_html += f"• {r}<br><br>"
+        rec_html += "</div></div>"
+        st.markdown(rec_html, unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PAGE MAIN
+# DASHBOARD ENTRYPOINT
 # ══════════════════════════════════════════════════════════════════════════════
 def main():
-    # Nav bar
+    # Navbar
     st.markdown("""
     <div class="nav-bar">
       <div class="nav-logo">🛡️ Repository Risk Intelligence
-        <span class="nav-badge">BETA</span>
+        <span class="nav-badge">PRODUCTION</span>
       </div>
-      <div style="font-size:0.75rem;color:#475569;">Powered by Random Forest · Explainability AI · Trust Gate</div>
+      <div style="font-size:0.75rem;color:#475569;">V3 Leakage-Free Pipeline · Trust Gate & Explainability</div>
     </div>
     """, unsafe_allow_html=True)
 
-    # Check if we already have results cached
-    if "analysis_result" not in st.session_state:
-        st.session_state.analysis_result = None
-    if "analysis_repo_url" not in st.session_state:
-        st.session_state.analysis_repo_url = ""
+    # Initialize states
+    if "analysis_res" not in st.session_state:
+        st.session_state.analysis_res = None
+    if "analysis_url" not in st.session_state:
+        st.session_state.analysis_url = ""
     if "analysis_owner" not in st.session_state:
         st.session_state.analysis_owner = ""
-    if "analysis_repo_name" not in st.session_state:
-        st.session_state.analysis_repo_name = ""
+    if "analysis_repo" not in st.session_state:
+        st.session_state.analysis_repo = ""
 
-    # ── HERO + URL INPUT ──────────────────────────────────────────────────
-    if st.session_state.analysis_result is None:
+    # Home/Search Input View
+    if st.session_state.analysis_res is None:
         st.markdown("""
         <div class="hero">
-          <div class="hero-title">Repository Risk Intelligence</div>
+          <div class="hero-title">Repository Risk Intelligence Platform</div>
           <div class="hero-sub">
-            Paste any GitHub repository URL and get instant file-level risk scores,
-            explainability reports, and trust assessments — powered by production ML.
+            Analyze codebases directly from public GitHub URLs. Predict file-level risk, identify technical debt hot-spots, and generate executive-ready reports.
           </div>
         </div>
         """, unsafe_allow_html=True)
 
         st.markdown('<div class="url-card">', unsafe_allow_html=True)
-        col_inp, col_btn = st.columns([3, 1])
-        with col_inp:
+        ci, cb = st.columns([3, 1])
+        with ci:
             url = st.text_input(
                 "GitHub Repository URL",
-                value=st.session_state.analysis_repo_url or "https://github.com/pallets/flask",
+                value=st.session_state.analysis_url or "https://github.com/pallets/flask",
                 placeholder="https://github.com/owner/repository",
                 label_visibility="collapsed"
             )
-        with col_btn:
-            analyze_clicked = st.button("🚀 Analyze Repository")
-
+        with cb:
+            click = st.button("🚀 Analyze Repository")
+            
         st.markdown("""
-        <div style="margin-top:1rem;display:flex;gap:1.5rem;flex-wrap:wrap;">
-          <div style="font-size:0.75rem;color:#475569;">
-            ✓ Clone &nbsp; ✓ Mine &nbsp; ✓ Quality Metrics &nbsp; ✓ Feature Engineering
-            &nbsp; ✓ RF Prediction &nbsp; ✓ Explainability &nbsp; ✓ Trust Gate
-          </div>
+        <div style="margin-top:1rem;font-size:0.75rem;color:#475569;text-align:center;">
+          ✓ Fully leakage-free validation &nbsp;·&nbsp; ✓ v3 Composite Labels &nbsp;·&nbsp; ✓ XGBoost Engine &nbsp;·&nbsp; ✓ PDF Export Report
         </div>
         """, unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
-        # Example repos
+        # Preloaded examples
         st.markdown('<br>', unsafe_allow_html=True)
-        st.markdown('<div style="text-align:center;font-size:0.75rem;color:#475569;margin-bottom:0.5rem;">Try an example repository:</div>', unsafe_allow_html=True)
-        ex_cols = st.columns(5)
+        st.markdown('<div style="text-align:center;font-size:0.75rem;color:#475569;margin-bottom:0.5rem;">Pre-cached external validation templates:</div>', unsafe_allow_html=True)
+        ex_cols = st.columns(3)
         examples = [
-            ("pallets/flask","https://github.com/pallets/flask"),
-            ("pallets/click","https://github.com/pallets/click"),
-            ("encode/databases","https://github.com/encode/databases"),
-            ("axios/axios","https://github.com/axios/axios"),
-            ("reduxjs/redux","https://github.com/reduxjs/redux"),
+            ("pallets/flask", "https://github.com/pallets/flask"),
+            ("streamlit/streamlit", "https://github.com/streamlit/streamlit"),
+            ("calcom/cal.com", "https://github.com/calcom/cal.com"),
         ]
         for ec, (name, eurl) in zip(ex_cols, examples):
             with ec:
                 if st.button(name, key=f"ex_{name}", use_container_width=True):
-                    st.session_state.analysis_repo_url = eurl
+                    st.session_state.analysis_url = eurl
                     st.rerun()
 
-        if analyze_clicked:
+        if click:
             if not url.strip():
-                st.error("Please enter a GitHub repository URL."); return
+                st.error("Please enter a GitHub repository URL.")
+                return
             owner, repo_name = parse_github_url(url)
             if not owner:
-                st.error("Invalid GitHub URL. Use format: https://github.com/owner/repo"); return
+                st.error("Invalid GitHub URL structure. Use format: https://github.com/owner/repo")
+                return
 
-            st.session_state.analysis_repo_url  = url
+            st.session_state.analysis_url  = url
             st.session_state.analysis_owner     = owner
-            st.session_state.analysis_repo_name = repo_name
+            st.session_state.analysis_repo = repo_name
 
-            # ── PIPELINE EXECUTION ──────────────────────────────────────
+            # Run pipeline
             st.markdown(f"""
             <div style="background:#111318;border:1px solid #1e293b;border-radius:12px;padding:1.25rem 1.5rem;margin-top:1.5rem;">
               <div style="font-weight:700;color:#f8fafc;margin-bottom:0.75rem;">
-                ⚙️ Analyzing <span style="color:#6366f1;">{owner}/{repo_name}</span>
+                ⚙️ Executing pipeline for <span style="color:#6366f1;">{owner}/{repo_name}</span>
               </div>
             """, unsafe_allow_html=True)
 
@@ -1106,52 +1279,113 @@ def main():
             log_box = st.empty()
 
             stages = [
-                "Cloning repository…",
-                "Extracting commits…",
-                "Mining modifications…",
-                "Quality metrics pipeline…",
-                "Feature engineering…",
-                "Running RF predictions…",
-                "Building explainability…",
-                "Generating report…",
+                "Cloning repository...",
+                "Running Quality extraction...",
+                "Running Commit features analysis...",
+                "Engineering feature matrix...",
+                "Loading production model...",
+                "Generating predictions...",
+                "Finalizing summary..."
             ]
-            for i, s in enumerate(stages):
-                status.markdown(f'<div style="font-size:0.85rem;color:#94a3b8;">{s}</div>',
-                                unsafe_allow_html=True)
-                prog.progress((i+1) / len(stages) * 0.85)
-                if i == 0: break  # let pipeline start
 
-            df_result = run_pipeline(owner, repo_name, log_box)
+            for i, s in enumerate(stages):
+                status.markdown(f'<div style="font-size:0.85rem;color:#94a3b8;">{s}</div>', unsafe_allow_html=True)
+                prog.progress((i+1) / len(stages) * 0.9)
+                if i == 0: break
+                
+            res = run_pipeline(owner, repo_name, log_box)
             prog.progress(1.0)
             status.empty()
 
             st.markdown("</div>", unsafe_allow_html=True)
 
-            if df_result is None or df_result.empty:
-                st.error("❌ Pipeline failed. Check the log above for details.")
+            if res is None:
+                st.error("Pipeline run failed. Please check logs.")
                 return
-
-            st.session_state.analysis_result = df_result
+                
+            st.session_state.analysis_res = res
             st.rerun()
-    else:
-        # ── RESULTS DASHBOARD ──────────────────────────────────────────────
-        df   = st.session_state.analysis_result
-        url  = st.session_state.analysis_repo_url
-        owner     = st.session_state.analysis_owner
-        repo_name = st.session_state.analysis_repo_name
 
-        # Reset button
-        col_reset = st.columns([6,1])[1]
-        with col_reset:
+    else:
+        # Results View
+        res = st.session_state.analysis_res
+        df = res["df"]
+        meta = res["meta"]
+        url = st.session_state.analysis_url
+        owner = st.session_state.analysis_owner
+        repo_name = st.session_state.analysis_repo
+
+        # Top dashboard panel reset controls
+        c_space, c_reset = st.columns([6, 1])
+        with c_reset:
             if st.button("🔄 New Analysis"):
-                st.session_state.analysis_result    = None
-                st.session_state.analysis_repo_url  = ""
+                st.session_state.analysis_res  = None
+                st.session_state.analysis_url  = ""
                 st.session_state.analysis_owner     = ""
-                st.session_state.analysis_repo_name = ""
+                st.session_state.analysis_repo = ""
                 st.rerun()
 
-        render_dashboard(df, owner, repo_name, url)
-
+        # Render panels
+        render_health_dashboard(df, owner, repo_name, meta, url)
+        
+        # Interactive table
+        filtered_df = render_interactive_table(df)
+        
+        # File Explainer
+        render_file_explainer(filtered_df)
+        
+        # Technical Debt hotspots
+        render_tech_debt_hotspots(df)
+        
+        # Trust Gate details
+        render_trust_gate_details(df)
+        
+        # Repo Similarity
+        sim_df = render_repo_similarity(df, repo_name)
+        
+        # Executive Summary & Recommendations
+        render_executive_summary(df, owner, repo_name, meta, sim_df)
+        
+        # PDF EXPORT BUTTON
+        st.markdown('<div class="section-hdr" style="margin-top:1.5rem;">📥 Export Report</div>', unsafe_allow_html=True)
+        pdf_col, _ = st.columns([1, 3])
+        with pdf_col:
+            try:
+                # Calculate required stats for generator
+                hs = health_score(df)
+                n_high = int((df["predicted_risk"] == "HIGH").sum())
+                n_med  = int((df["predicted_risk"] == "MEDIUM").sum())
+                n_files = len(df)
+                
+                overall_risk = "LOW"
+                if n_high > 0 or n_med > 0:
+                    pct_high = n_high / n_files
+                    pct_med  = n_med / n_files
+                    if pct_high >= 0.15: overall_risk = "HIGH"
+                    elif pct_high > 0 or pct_med >= 0.3: overall_risk = "MEDIUM"
+                    
+                avg_conf = float(df["confidence_score"].mean())
+                
+                pdf_data = generate_pdf_report(
+                    df=df,
+                    owner=owner,
+                    repo_name=repo_name,
+                    health_score=hs,
+                    overall_risk=overall_risk,
+                    avg_confidence=avg_conf,
+                    sim_df=sim_df
+                )
+                
+                st.download_button(
+                    label="📄 Download Executive Assessment PDF",
+                    data=pdf_data,
+                    file_name=f"{repo_name}_risk_assessment.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
+            except Exception as ex:
+                st.error(f"Error compiling PDF report: {ex}")
+                traceback.print_exc()
 
 if __name__ == "__main__":
     main()

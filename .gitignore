@@ -21,6 +21,7 @@ ENV/
 
 # Project Data & Repositories
 data/repositories/
+data/external_repos/
 data/raw/*
 !data/raw/.gitkeep
 data/processed/*
