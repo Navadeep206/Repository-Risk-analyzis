@@ -296,7 +296,9 @@ def health_score(df: pd.DataFrame) -> int:
     return max(0, min(100, int(100 - avg_risk)))
 
 def parse_github_url(url: str):
-    url = url.strip().rstrip("/")
+    url = url.strip()
+    # Strip query parameters and hashes
+    url = url.split("?")[0].split("#")[0].rstrip("/")
     m = re.match(r"https?://github\.com/([^/]+)/([^/\s]+)", url)
     if m:
         return m.group(1), m.group(2)
@@ -1262,7 +1264,7 @@ def main():
                 st.error("Invalid GitHub URL structure. Use format: https://github.com/owner/repo")
                 return
 
-            st.session_state.analysis_url  = url
+            st.session_state.analysis_url  = f"https://github.com/{owner}/{repo_name}"
             st.session_state.analysis_owner     = owner
             st.session_state.analysis_repo = repo_name
 
