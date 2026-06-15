@@ -1,7 +1,0 @@
-model,cv_accuracy_mean,cv_accuracy_std,cv_f1_macro_mean,cv_f1_macro_std,validation_accuracy,validation_f1_macro,test_accuracy,test_f1_macro
-Logistic Regression,1.0,0.0,1.0,0.0,1.0,1.0,1.0,1.0
-Decision Tree,1.0,0.0,1.0,0.0,1.0,1.0,1.0,1.0
-Random Forest,1.0,0.0,1.0,0.0,1.0,1.0,1.0,1.0
-XGBoost,1.0,0.0,1.0,0.0,1.0,1.0,1.0,1.0
-LightGBM,1.0,0.0,1.0,0.0,1.0,1.0,1.0,1.0
-CatBoost,1.0,0.0,1.0,0.0,1.0,1.0,1.0,1.0

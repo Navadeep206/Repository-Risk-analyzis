@@ -1,4 +1,0 @@
-Model,Accuracy,Macro F1,Weighted F1
-Model A (Tabular Only),1.0,1.0,1.0
-Model B (Embeddings Only),1.0,1.0,1.0
-Model C (Hybrid Fusion),1.0,1.0,1.0

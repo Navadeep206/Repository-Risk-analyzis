@@ -1,7 +1,0 @@
-Model,Accuracy,Macro F1,Weighted F1,Improvement Over RF
-Logistic Regression,0.4762,0.3132,0.3842,-0.3582
-Decision Tree,0.6071,0.4995,0.5844,-0.1719
-Random Forest,0.75,0.6714,0.7502,0.0
-XGBoost,0.7024,0.6373,0.7001,-0.0341
-Model B (Embeddings Only),1.0,1.0,1.0,0.3286
-Hybrid Model C (Tabular + Embeddings),1.0,1.0,1.0,0.3286
