@@ -1020,14 +1020,6 @@ def render_tech_debt_hotspots(df: pd.DataFrame):
     # Sort and rank top 25 candidate refactoring files
     top25 = df.sort_values(by="risk_score_val", ascending=False).head(25).copy().reset_index(drop=True)
     
-    hot_headers = [
-        Paragraph("<b>Rank</b>", ParagraphStyle('H', fontSize=9, textColor=colors.HexColor('#94a3b8'))),
-        Paragraph("<b>File Path</b>", ParagraphStyle('H', fontSize=9, textColor=colors.HexColor('#94a3b8'))),
-        Paragraph("<b>Risk Score</b>", ParagraphStyle('H', fontSize=9, textColor=colors.HexColor('#94a3b8'))),
-        Paragraph("<b>Confidence</b>", ParagraphStyle('H', fontSize=9, textColor=colors.HexColor('#94a3b8'))),
-        Paragraph("<b>Priority</b>", ParagraphStyle('H', fontSize=9, textColor=colors.HexColor('#94a3b8')))
-    ]
-    
     # Build dataframe for presentation
     hotspots_df = []
     for idx, (_, row) in enumerate(top25.iterrows(), 1):
