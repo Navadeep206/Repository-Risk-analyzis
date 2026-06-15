@@ -6,6 +6,12 @@ Loads models/hybrid_risk_predictor.pt and runs inference on joint tabular + embe
 
 import os
 import sys
+
+# MUST be set before importing torch or any OpenMP-linked library
+# Prevents EXC_BAD_ACCESS (SIGSEGV) from duplicate libomp on macOS ARM64
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+os.environ["OMP_NUM_THREADS"] = "1"
+
 import torch
 import numpy as np
 import pandas as pd

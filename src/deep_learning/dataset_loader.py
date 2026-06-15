@@ -6,6 +6,12 @@ Partitions embedding_dataset.parquet into disjoint repository-aware splits and c
 
 import os
 import sys
+
+# MUST be set before importing torch, sklearn or any OpenMP-linked library
+# Prevents EXC_BAD_ACCESS (SIGSEGV) from duplicate libomp on macOS ARM64
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+os.environ["OMP_NUM_THREADS"] = "1"
+
 import numpy as np
 import pandas as pd
 import torch
@@ -53,10 +59,24 @@ def get_dataloaders(batch_size: int = 32) -> Tuple[DataLoader, DataLoader, DataL
     # Map text labels to integers
     df["label"] = df["historical_risk_label"].map(LABEL_MAP)
     
-    # Define repository-disjoint splits to match Phase 4 exactly
-    train_repos = ["axios", "redux", "click"]
-    val_repos = ["express"]
-    test_repos = ["databases", "jinja"]
+    # Use the official split files if they exist, otherwise fall back to hardcoded defaults
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+    from config import FINAL_DIR as _FINAL_DIR
+    train_split_file = os.path.join(_FINAL_DIR, "train_v2.csv")
+    val_split_file   = os.path.join(_FINAL_DIR, "validation_v2.csv")
+    test_split_file  = os.path.join(_FINAL_DIR, "test_v2.csv")
+
+    if os.path.exists(train_split_file) and os.path.exists(val_split_file) and os.path.exists(test_split_file):
+        train_repos = pd.read_csv(train_split_file)["repository_name"].unique().tolist()
+        val_repos   = pd.read_csv(val_split_file)["repository_name"].unique().tolist()
+        test_repos  = pd.read_csv(test_split_file)["repository_name"].unique().tolist()
+        print(f"[+] Loaded repository splits from v2 split files.")
+    else:
+        # Fallback for backward compatibility
+        train_repos = ["axios", "redux", "click"]
+        val_repos   = ["express"]
+        test_repos  = ["databases", "jinja"]
+        print("[!] Warning: v2 split files not found. Using fallback hardcoded splits.")
     
     df_train = df[df["repository_name"].isin(train_repos)].copy()
     df_val = df[df["repository_name"].isin(val_repos)].copy()

@@ -21,32 +21,91 @@ from modification_extractor import extract_modifications
 from quality_metrics.quality_pipeline import run_quality_pipeline
 from quality_metrics.language_detector import detect_languages
 
-# Configured target repositories to mine (small, fast, diverse)
+# =============================================================================
+# PHASE 1 — Starter repositories (real-data verified, fast to mine)
+# Expand to PHASE_2_REPOSITORIES after Phase 1 validation succeeds.
+# =============================================================================
 TARGET_REPOSITORIES = [
-    {"name": "click", "url": "https://github.com/pallets/click", "lang": "python"},
-    {"name": "jinja", "url": "https://github.com/pallets/jinja", "lang": "python"},
-    {"name": "express", "url": "https://github.com/expressjs/express", "lang": "javascript"},
-    {"name": "redux", "url": "https://github.com/reduxjs/redux", "lang": "typescript"},
-    {"name": "axios", "url": "https://github.com/axios/axios", "lang": "typescript"},
-    {"name": "lodash", "url": "https://github.com/lodash/lodash", "lang": "javascript"},
-    {"name": "databases", "url": "https://github.com/encode/databases", "lang": "python"},
-    {"name": "fastapi", "url": "https://github.com/tiangolo/fastapi", "lang": "python"},
-    {"name": "svelte", "url": "https://github.com/sveltejs/svelte", "lang": "typescript"},
-    {"name": "prisma", "url": "https://github.com/prisma/prisma", "lang": "typescript"},
-    {"name": "localstack", "url": "https://github.com/localstack/localstack", "lang": "python"},
-    {"name": "scikit-learn", "url": "https://github.com/scikit-learn/scikit-learn", "lang": "python"},
-    {"name": "requests", "url": "https://github.com/psf/requests", "lang": "python"},
-    {"name": "airflow", "url": "https://github.com/apache/airflow", "lang": "python"},
-    {"name": "django", "url": "https://github.com/django/django", "lang": "python"},
-    {"name": "pytorch", "url": "https://github.com/pytorch/pytorch", "lang": "python"},
-    {"name": "pandas", "url": "https://github.com/pandas-dev/pandas", "lang": "python"},
-    {"name": "ansible", "url": "https://github.com/ansible/ansible", "lang": "python"},
-    {"name": "ray", "url": "https://github.com/ray-project/ray", "lang": "python"},
-    {"name": "elasticsearch", "url": "https://github.com/elastic/elasticsearch", "lang": "java"},
-    {"name": "pytest", "url": "https://github.com/pytest-dev/pytest", "lang": "python"},
-    {"name": "prefect", "url": "https://github.com/PrefectHQ/prefect", "lang": "python"},
-    {"name": "great_expectations", "url": "https://github.com/great-expectations/great_expectations", "lang": "python"}
+    {"name": "requests",  "url": "https://github.com/psf/requests",        "lang": "python"},
+    {"name": "pytest",    "url": "https://github.com/pytest-dev/pytest",    "lang": "python"},
+    {"name": "click",     "url": "https://github.com/pallets/click",        "lang": "python"},
+    {"name": "databases", "url": "https://github.com/encode/databases",     "lang": "python"},
 ]
+
+# =============================================================================
+# PHASE 2 — Batch 1: Small/medium repos (uncomment after Phase 1 verified)
+# =============================================================================
+PHASE_2_BATCH_1 = [
+    {"name": "jinja",     "url": "https://github.com/pallets/jinja",       "lang": "python"},
+    {"name": "fastapi",   "url": "https://github.com/tiangolo/fastapi",    "lang": "python"},
+    {"name": "express",   "url": "https://github.com/expressjs/express",   "lang": "javascript"},
+    {"name": "redux",     "url": "https://github.com/reduxjs/redux",       "lang": "typescript"},
+]
+
+# =============================================================================
+# PHASE 2 — Batch 2: Medium repos
+# =============================================================================
+PHASE_2_BATCH_2 = [
+    {"name": "axios",       "url": "https://github.com/axios/axios",           "lang": "typescript"},
+    {"name": "lodash",      "url": "https://github.com/lodash/lodash",         "lang": "javascript"},
+    {"name": "svelte",      "url": "https://github.com/sveltejs/svelte",       "lang": "typescript"},
+    {"name": "prisma",      "url": "https://github.com/prisma/prisma",         "lang": "typescript"},
+]
+
+# =============================================================================
+# PHASE 2 — Batch 3: Larger repos (depth-limit recommended)
+# =============================================================================
+PHASE_2_BATCH_3 = [
+    {"name": "localstack",        "url": "https://github.com/localstack/localstack",           "lang": "python"},
+    {"name": "scikit-learn",      "url": "https://github.com/scikit-learn/scikit-learn",       "lang": "python"},
+    {"name": "prefect",           "url": "https://github.com/PrefectHQ/prefect",               "lang": "python"},
+    {"name": "great_expectations","url": "https://github.com/great-expectations/great_expectations","lang": "python"},
+]
+
+# =============================================================================
+# PHASE 2 — Batch 4: Large repos (clone with --depth=200)
+# =============================================================================
+PHASE_2_BATCH_4 = [
+    {"name": "airflow",       "url": "https://github.com/apache/airflow",           "lang": "python"},
+    {"name": "django",        "url": "https://github.com/django/django",            "lang": "python"},
+    {"name": "pandas",        "url": "https://github.com/pandas-dev/pandas",        "lang": "python"},
+    {"name": "ray",           "url": "https://github.com/ray-project/ray",          "lang": "python"},
+    # {"name": "elasticsearch", "url": "https://github.com/elastic/elasticsearch",    "lang": "java"},
+]
+
+
+# =============================================================================
+# PHASE 2 — Batch 5: Very large (clone with --depth=100, file limits apply)
+# =============================================================================
+PHASE_2_BATCH_5 = [
+    {"name": "pytorch", "url": "https://github.com/pytorch/pytorch",   "lang": "python"},
+    {"name": "ansible", "url": "https://github.com/ansible/ansible",   "lang": "python"},
+]
+
+# Combine all phases and batches into the final target list of 22 repositories (excluding elasticsearch)
+TARGET_REPOSITORIES = (
+    TARGET_REPOSITORIES +
+    PHASE_2_BATCH_1 +
+    PHASE_2_BATCH_2 +
+    PHASE_2_BATCH_3 +
+    PHASE_2_BATCH_4 +
+    PHASE_2_BATCH_5
+)
+
+# Apply configuration details for heavy repositories to prevent memory exhaustion
+for repo in TARGET_REPOSITORIES:
+    if repo["name"] == "pytorch":
+        repo["depth"] = 200
+    elif repo["name"] == "ray":
+        repo["depth"] = 500
+
+# Reorder TARGET_REPOSITORIES so that heavy repositories (pytorch, ray) run last
+heavy_repos = ["ray", "pytorch"]
+TARGET_REPOSITORIES = [r for r in TARGET_REPOSITORIES if r["name"] not in heavy_repos] + \
+                      [r for r in TARGET_REPOSITORIES if r["name"] in heavy_repos]
+
+
+
 
 def mine_all_repositories() -> None:
     """
@@ -117,13 +176,30 @@ def mine_all_repositories() -> None:
         if not os.path.exists(local_path):
             print(f"[*] Cloning {name} to {local_path}...")
             try:
-                Repo.clone_from(url, local_path)
+                clone_kwargs = {}
+                if "depth" in repo_info:
+                    clone_kwargs["depth"] = repo_info["depth"]
+                    print(f"[*] Using shallow clone with depth={repo_info['depth']} for {name}")
+                Repo.clone_from(url, local_path, **clone_kwargs)
                 print(f"[+] Cloned successfully.")
             except Exception as e:
                 print(f"[-] Failed to clone {name}: {e}. Skipping repository.")
                 continue
         else:
             print(f"[*] Repository {name} already cloned at {local_path}.")
+
+        # 1b. Ensure full history is available (convert shallow clone if needed)
+        try:
+            repo_obj = Repo(local_path)
+            if repo_obj.git.rev_parse("--is-shallow-repository").strip() == "true":
+                if "depth" in repo_info:
+                    print(f"[*] Keeping {name} as a shallow repository as configured (depth={repo_info['depth']}).")
+                else:
+                    print(f"[*] {name} is a shallow clone. Fetching full history (unshallow)...")
+                    repo_obj.git.fetch("--unshallow", "--quiet")
+                    print(f"[+] Unshallow complete for {name}.")
+        except Exception as e:
+            print(f"[!] Unshallow check skipped for {name}: {e}")
             
         # 2. Extract Commits
         try:
@@ -144,6 +220,14 @@ def mine_all_repositories() -> None:
             extract_modifications(local_path, mods_file)
         except Exception as e:
             print(f"[-] Modifications extraction failed for {name}: {e}")
+            # Write empty CSV with correct headers so merge step can still include this repo
+            pd.DataFrame(columns=[
+                "commit_hash", "author_email", "commit_date",
+                "old_path", "new_path", "change_type",
+                "added_lines", "deleted_lines", "net_lines",
+                "complexity", "nloc"
+            ]).to_csv(mods_file, index=False)
+            print(f"[!] Empty modifications file written for {name} to allow downstream merge.")
             
         # 5. Run universal quality metrics pipeline
         try:

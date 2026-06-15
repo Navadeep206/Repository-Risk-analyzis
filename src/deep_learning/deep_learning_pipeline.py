@@ -6,6 +6,12 @@ Sequences dataset splitting, training, validation early stopping, test set evalu
 
 import os
 import sys
+
+# MUST be set before importing torch, sklearn or any OpenMP-linked library
+# Prevents EXC_BAD_ACCESS (SIGSEGV) from duplicate libomp on macOS ARM64
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+os.environ["OMP_NUM_THREADS"] = "1"
+
 import torch
 
 # Ensure parent directory is in path for imports
@@ -68,8 +74,9 @@ def run_dl_pipeline() -> None:
     torch.save(model.state_dict(), model_save_path)
     print(f"[+] Saved best checkpoint weights to {model_save_path}")
     
-    # Save training history
-    history_df = pd = __import__("pandas").DataFrame(history)
+    # Save training history to CSV
+    import pandas as pd
+    history_df = pd.DataFrame(history)
     csv_save_path = os.path.join(reports_dir, "training_metrics.csv")
     history_df.to_csv(csv_save_path, index=False)
     print(f"[+] Saved training history metrics to {csv_save_path}")

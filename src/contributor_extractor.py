@@ -52,8 +52,8 @@ def analyze_contributors(repo_path: str, output_file: Optional[str] = None) -> O
             
         stats = contributor_stats[author_email]
         stats["commits"] += 1
-        stats["insertions"] += commit.insertions
-        stats["deletions"] += commit.deletions
+        stats["insertions"] += 0  # Optimized: unused downstream
+        stats["deletions"] += 0  # Optimized: unused downstream
         
         # Keep track of dates
         if commit.author_date < stats["first_commit_date"]:

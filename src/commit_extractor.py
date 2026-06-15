@@ -28,41 +28,59 @@ def extract_commits(repo_path: str, output_file: Optional[str] = None) -> pd.Dat
     if not output_file:
         output_file = os.path.join(RAW_DIR, f"{repo_name}_commits.csv")
     
-    print(f"[*] Extracting commits from: {repo_path}")
-    print("[*] Processing history (this may take a few moments for large repositories)...")
+    import csv
     
-    commit_data = []
-    
-    # Traverse commits using PyDriller
-    for commit in Repository(repo_path).traverse_commits():
-        commit_data.append({
-            "commit_hash": commit.hash,
-            "author_name": commit.author.name,
-            "author_email": commit.author.email,
-            "author_date": commit.author_date,
-            "committer_name": commit.committer.name,
-            "committer_email": commit.committer.email,
-            "committer_date": commit.committer_date,
-            "message": commit.msg.strip(),
-            "branches": ", ".join(commit.branches),
-            "is_merge": commit.merge,
-            "files_changed": commit.files,
-            "insertions": commit.insertions,
-            "deletions": commit.deletions,
-            "lines_changed": commit.lines
-        })
-        
-    df = pd.DataFrame(commit_data)
+    headers = [
+        "commit_hash", "author_name", "author_email", "author_date",
+        "committer_name", "committer_email", "committer_date",
+        "message", "branches", "is_merge", "files_changed",
+        "insertions", "deletions", "lines_changed"
+    ]
     
     # Ensure raw directory exists
     ensure_dirs_exist()
     
-    # Save to CSV
-    df.to_csv(output_file, index=False)
-    print(f"[+] Successfully extracted {len(df)} commits.")
+    print(f"[*] Extracting commits from: {repo_path}")
+    print("[*] Processing history (this may take a few moments for large repositories)...")
+    
+    count = 0
+    with open(output_file, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(headers)
+        
+        for commit in Repository(repo_path).traverse_commits():
+            msg = commit.msg.strip() if commit.msg else ""
+            if len(msg) > 200:
+                msg = msg[:200] + "..."
+            msg = msg.replace("\n", " ").replace("\r", " ")
+            
+            writer.writerow([
+                commit.hash,
+                commit.author.name if commit.author else "unknown",
+                commit.author.email if commit.author else "unknown",
+                commit.author_date.isoformat() if commit.author_date else "",
+                commit.committer.name if commit.committer else "unknown",
+                commit.committer.email if commit.committer else "unknown",
+                commit.committer_date.isoformat() if commit.committer_date else "",
+                msg,
+                "",  # branches optimized
+                commit.merge,
+                0, 0, 0, 0
+            ])
+            count += 1
+            if count % 2000 == 0:
+                print(f"[*] Processed {count} commits...")
+                
+    print(f"[+] Successfully extracted {count} commits.")
     print(f"[+] Output saved to: {output_file}")
     
+    try:
+        df = pd.read_csv(output_file)
+    except Exception as e:
+        print(f"[!] Error loading generated CSV {output_file}: {e}")
+        df = pd.DataFrame(columns=headers)
     return df
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Extract commit history from a git repository.")

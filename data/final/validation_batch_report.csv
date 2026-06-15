@@ -1,0 +1,6 @@
+repository_name,cloned,commit_count,contributors,modifications,quality_metric_rows,dataset_rows,status
+django,True,34691,3407,152241,2963,2963,SUCCESS
+pandas,True,38107,4154,148325,1509,1509,SUCCESS
+fastapi,True,7285,911,28600,1125,1125,SUCCESS
+prisma,True,12226,384,70090,2611,2611,SUCCESS
+svelte,True,11252,951,87038,3448,3448,SUCCESS

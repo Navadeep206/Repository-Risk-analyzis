@@ -1,0 +1,24 @@
+repository_name,detected_language,language_supported,metrics_generated,skipped,analyzer_used,files_processed,files_skipped
+airflow,python,Yes,No,Yes (not in target lists),Radon,0,0
+ansible,python,Yes,No,Yes (not in target lists),Radon,0,0
+axios,typescript,Yes,No,Yes (not in target lists),Lizard/ESLint,0,0
+click,python,Yes,Yes,No,Radon,63,0
+databases,python,Yes,Yes,No,Radon,24,0
+django,python,Yes,No,Yes (not in target lists),Radon,0,0
+elasticsearch,java,No,No,Yes (not in target lists),None,0,0
+express,javascript,Yes,No,Yes (not in target lists),Lizard/ESLint,0,0
+fastapi,python,Yes,No,Yes (not in target lists),Radon,0,0
+great_expectations,python,Yes,No,Yes (not in target lists),Radon,0,0
+jinja,python,Yes,No,Yes (not in target lists),Radon,0,0
+localstack,python,Yes,No,Yes (not in target lists),Radon,0,0
+lodash,javascript,Yes,No,Yes (not in target lists),Lizard/ESLint,0,0
+pandas,python,Yes,No,Yes (not in target lists),Radon,0,0
+prefect,python,Yes,No,Yes (not in target lists),Radon,0,0
+prisma,typescript,Yes,No,Yes (not in target lists),Lizard/ESLint,0,0
+pytest,python,Yes,Yes,No,Radon,241,0
+pytorch,python,Yes,No,Yes (not in target lists),Radon,0,0
+ray,python,Yes,No,Yes (not in target lists),Radon,0,0
+redux,typescript,Yes,No,Yes (not in target lists),Lizard/ESLint,0,0
+requests,python,Yes,Yes,No,Radon,37,0
+scikit-learn,python,Yes,No,Yes (not in target lists),Radon,0,0
+svelte,typescript,Yes,No,Yes (not in target lists),Lizard/ESLint,0,0

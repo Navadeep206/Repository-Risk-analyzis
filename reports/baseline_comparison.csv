@@ -1,0 +1,7 @@
+model,accuracy,precision_macro,recall_macro,macro_f1,weighted_f1
+RandomForest,1.0,1.0,1.0,1.0,1.0
+XGBoost,1.0,1.0,1.0,1.0,1.0
+LightGBM,1.0,1.0,1.0,1.0,1.0
+CatBoost,1.0,1.0,1.0,1.0,1.0
+DecisionTree,1.0,1.0,1.0,1.0,1.0
+LogisticRegression,0.9869,0.9922,0.9818,0.9868,0.9868

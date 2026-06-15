@@ -28,53 +28,81 @@ def extract_modifications(repo_path: str, output_file: Optional[str] = None) -> 
     if not output_file:
         output_file = os.path.join(RAW_DIR, f"{repo_name}_modifications.csv")
         
+    import csv
+    
+    headers = [
+        "commit_hash", "author_email", "commit_date",
+        "old_path", "new_path", "change_type",
+        "added_lines", "deleted_lines", "net_lines",
+        "complexity", "nloc"
+    ]
+    
+    ensure_dirs_exist()
+    
     print(f"[*] Extracting file modifications from: {repo_path}")
     print("[*] Parsing files (this may take a few moments for large histories)...")
     
-    modifications = []
+    count = 0
+    commit_count = 0
+    with open(output_file, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(headers)
+        
+        for commit in Repository(repo_path).traverse_commits():
+            commit_count += 1
+            try:
+                modified_files = commit.modified_files
+            except Exception as commit_err:
+                # Silently skip boundary/missing parent commits in shallow clones
+                continue
+                
+            for file in modified_files:
+                added = file.added_lines if file.added_lines is not None else 0
+                deleted = file.deleted_lines if file.deleted_lines is not None else 0
+                writer.writerow([
+                    commit.hash,
+                    commit.author.email if commit.author else "unknown",
+                    commit.author_date.isoformat() if commit.author_date else "",
+                    file.old_path if file.old_path else "",
+                    file.new_path if file.new_path else "",
+                    file.change_type.name if file.change_type else "UNKNOWN",
+                    added,
+                    deleted,
+                    added - deleted,
+                    -1,
+                    -1
+                ])
+                count += 1
+            if commit_count % 2000 == 0:
+                print(f"[*] Traversed {commit_count} commits, written {count} modifications...")
+                
+    print(f"[+] Successfully extracted {count} file modifications across {commit_count} commits.")
     
-    # Traverse commits and inspect modified files
-    for commit in Repository(repo_path).traverse_commits():
-        for file in commit.modified_files:
-            modifications.append({
-                "commit_hash": commit.hash,
-                "author_email": commit.author.email,
-                "commit_date": commit.author_date,
-                "old_path": file.old_path,
-                "new_path": file.new_path,
-                "change_type": file.change_type.name if file.change_type else "UNKNOWN",
-                "added_lines": file.added_lines,
-                "deleted_lines": file.deleted_lines,
-                "net_lines": file.added_lines - file.deleted_lines,
-                "complexity": file.complexity if file.complexity is not None else -1,
-                "nloc": file.nloc if file.nloc is not None else -1
-            })
-            
-    df = pd.DataFrame(modifications)
-    
-    if len(df) == 0:
+    if count == 0:
         print("[-] No file modifications found.")
         return None
         
-    # Ensure raw directory exists
-    ensure_dirs_exist()
-    
-    df.to_csv(output_file, index=False)
-    print(f"[+] Successfully extracted {len(df)} file modifications.")
-    
+    try:
+        df = pd.read_csv(output_file)
+    except Exception as e:
+        print(f"[!] Error loading generated CSV {output_file}: {e}")
+        df = pd.DataFrame(columns=headers)
+        return df
+        
     # Summarize top 5 files by modification frequency (churn hot spots)
-    # Using new_path or old_path if new_path is None
     df["active_path"] = df["new_path"].fillna(df["old_path"])
-    hot_spots = df.groupby("active_path").size().reset_index(name="modification_count")
-    hot_spots = hot_spots.sort_values(by="modification_count", ascending=False).reset_index(drop=True)
-    
-    print("-" * 60)
-    print(f"{'Hotspot File Path':<45} | {'Modifications':<12}")
-    print("-" * 60)
-    for idx, row in hot_spots.head(5).iterrows():
-        print(f"{row['active_path'][:44]:<45} | {row['modification_count']:<12}")
-    print("-" * 60)
-    
+    if not df.empty and "active_path" in df.columns:
+        hot_spots = df.groupby("active_path").size().reset_index(name="modification_count")
+        hot_spots = hot_spots.sort_values(by="modification_count", ascending=False).reset_index(drop=True)
+        
+        print("-" * 60)
+        print(f"{'Hotspot File Path':<45} | {'Modifications':<12}")
+        print("-" * 60)
+        for idx, row in hot_spots.head(5).iterrows():
+            active_path_str = str(row['active_path'])
+            print(f"{active_path_str[:44]:<45} | {row['modification_count']:<12}")
+        print("-" * 60)
+        
     print(f"[+] Output saved to: {output_file}")
     return df
 

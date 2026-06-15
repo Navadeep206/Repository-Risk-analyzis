@@ -1,7 +1,18 @@
 #!/usr/bin/env python3
 """
-Mock raw dataset generator to populate target repositories.
-Enables fast local rebuilds while satisfying all constraints.
+Mock raw dataset generator — FOR UI DEMOS AND DEVELOPMENT TESTING ONLY.
+
+WARNING: THIS FILE IS DISABLED FROM THE ML TRAINING PIPELINE.
+Calling generate_mock_data() will raise a RuntimeError unless
+the ALLOW_MOCK_DATA_GENERATION=1 environment variable is explicitly set.
+
+DO NOT import or call this module from:
+  - dataset_pipeline.py
+  - multi_repository_miner.py
+  - any training, evaluation, or benchmarking script
+
+Audit Date: 2026-06-14
+Audit Finding: Mock data caused 1.0 Macro F1 across all models (data leakage).
 """
 
 import os
@@ -50,6 +61,34 @@ MODELS_DIR = os.path.join(BASE_DIR, "models")
 REPORTS_DIR = os.path.join(BASE_DIR, "reports")
 
 def generate_mock_data():
+    """
+    DISABLED: This function must NOT be called in any ML training, evaluation,
+    or benchmarking context. It produces synthetic data that causes 1.0 Macro F1
+    (data leakage) across all classifiers.
+
+    Permitted use: UI demos and development environment setup ONLY.
+    To enable: set environment variable ALLOW_MOCK_DATA_GENERATION=1
+    """
+    import os
+    if os.environ.get("ALLOW_MOCK_DATA_GENERATION", "0") != "1":
+        raise RuntimeError(
+            "\n" + "="*70 + "\n"
+            "MOCK DATA GENERATION IS DISABLED IN THE ML PIPELINE.\n"
+            "\n"
+            "generate_mock_data() produces synthetic data that causes\n"
+            "data leakage and Macro F1 = 1.0 across all classifiers.\n"
+            "\n"
+            "This function is ONLY permitted for UI demos.\n"
+            "To allow for demo purposes ONLY, set:\n"
+            "  export ALLOW_MOCK_DATA_GENERATION=1\n"
+            "\n"
+            "For training data, run REAL repository mining:\n"
+            "  python3 src/dataset_builder/dataset_pipeline.py\n"
+            "  (with real repositories cloned to data/repositories/)\n"
+            + "="*70
+        )
+
+    print("[!] WARNING: Generating MOCK data. For UI demo purposes ONLY.")
     print("[*] Cleaning old datasets and artifacts (keeping JOBPORTAL tests)...")
     for folder in [RAW_DIR, PROCESSED_DIR, REPOS_DIR, INTERMEDIATE_DIR, FINAL_DIR, EMBEDDINGS_DIR, MODELS_DIR, REPORTS_DIR]:
         if not os.path.exists(folder):
@@ -202,4 +241,13 @@ function testFunc{i}() {{
     print("[+] Mock dataset generation completed successfully!")
 
 if __name__ == "__main__":
-    generate_mock_data()
+    import sys
+    print("ERROR: generate_mock_data.py must not be run directly in production.")
+    print("It generates synthetic training data that causes data leakage (Macro F1 = 1.0).")
+    print("")
+    print("For UI demo use ONLY, run:")
+    print("  ALLOW_MOCK_DATA_GENERATION=1 python3 src/dataset_builder/generate_mock_data.py")
+    print("")
+    print("For real training data, run:")
+    print("  python3 src/dataset_builder/dataset_pipeline.py")
+    sys.exit(1)
