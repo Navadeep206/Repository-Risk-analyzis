@@ -103,10 +103,6 @@ html, body, [class*="css"], .stApp {
     margin-bottom: 1.5rem;
     position: relative; overflow: hidden;
 }
-.risk-banner::before {
-    content: ''; position: absolute; inset: 0;
-    background: inherit; filter: blur(0px);
-}
 .risk-banner-low    { background: linear-gradient(135deg,#052e16 0%,#14532d 100%); border: 1px solid #16a34a; }
 .risk-banner-medium { background: linear-gradient(135deg,#1c1917 0%,#451a03 100%); border: 1px solid #d97706; }
 .risk-banner-high   { background: linear-gradient(135deg,#1c0a0a 0%,#450a0a 100%); border: 1px solid #dc2626; }
@@ -1309,8 +1305,59 @@ def main():
         owner = st.session_state.analysis_owner
         repo_name = st.session_state.analysis_repo
 
-        # Top dashboard panel reset controls
-        c_space, c_reset = st.columns([6, 1])
+        # Top dashboard panel reset/export controls
+        c_space, c_pdf, c_reset = st.columns([4.2, 1.6, 1.2])
+        with c_pdf:
+            try:
+                hs_top = health_score(df)
+                n_high_top = int((df["predicted_risk"] == "HIGH").sum())
+                n_med_top  = int((df["predicted_risk"] == "MEDIUM").sum())
+                n_files_top = len(df)
+                
+                overall_risk_top = "LOW"
+                if n_high_top > 0 or n_med_top > 0:
+                    pct_high_top = n_high_top / n_files_top
+                    pct_med_top  = n_med_top / n_files_top
+                    if pct_high_top >= 0.15: overall_risk_top = "HIGH"
+                    elif pct_high_top > 0 or pct_med_top >= 0.3: overall_risk_top = "MEDIUM"
+                    
+                avg_conf_top = float(df["confidence_score"].mean())
+                
+                centroids_top = get_training_centroids()
+                sim_df_top = None
+                if centroids_top is not None:
+                    ext_centroid_top = df[NUM_FEATS].mean().values.reshape(1, -1)
+                    sims_top = {}
+                    for t_repo in centroids_top.index:
+                        t_vec_top = centroids_top.loc[t_repo].values.reshape(1, -1)
+                        sim_top = cosine_similarity(ext_centroid_top, t_vec_top)[0][0]
+                        sims_top[t_repo] = round(float(sim_top), 4)
+                    top3_top = sorted(sims_top.items(), key=lambda x: x[1], reverse=True)[:3]
+                    sim_df_top = pd.DataFrame([
+                        {"external_repo": repo_name, "rank": i+1, "similar_training_repo": name, "cosine_similarity": val}
+                        for i, (name, val) in enumerate(top3_top)
+                    ])
+
+                pdf_data_top = generate_pdf_report(
+                    df=df,
+                    owner=owner,
+                    repo_name=repo_name,
+                    health_score=hs_top,
+                    overall_risk=overall_risk_top,
+                    avg_confidence=avg_conf_top,
+                    sim_df=sim_df_top
+                )
+                
+                st.download_button(
+                    label="📄 Download PDF Report",
+                    data=pdf_data_top,
+                    file_name=f"{repo_name}_risk_assessment.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
+            except Exception as ex:
+                st.error(f"PDF Error: {ex}")
+
         with c_reset:
             if st.button("🔄 New Analysis"):
                 st.session_state.analysis_res  = None
