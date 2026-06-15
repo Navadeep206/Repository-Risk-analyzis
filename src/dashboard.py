@@ -429,7 +429,7 @@ def extract_quality_metrics(repo_path, repo_name, log_func, tracker=None, status
     log_func(f"✅ Extracted metrics for {len(df):,} source files {langs_found}", "ok")
     return df
 
-def extract_commit_features(repo_path, repo_name, log_func, tracker=None, status_slot=None, sub_slot=None, prog_bar=None):
+def extract_commit_features(repo_path, repo_name, log_func, tracker=None, status_slot=None, sub_slot=None, prog_bar=None, stats=None):
     log_func("📝 Analyzing git commit logs (pydriller)...", "run")
     from pydriller import Repository
     import subprocess
@@ -463,6 +463,7 @@ def extract_commit_features(repo_path, repo_name, log_func, tracker=None, status
     if tracker:
         tracker.start_stage(2)
         if status_slot:
+            from progress_tracker import render_pipeline_ui
             status_slot.markdown(render_pipeline_ui(tracker), unsafe_allow_html=True)
             if prog_bar:
                 prog_bar.progress(tracker.get_overall_progress())
@@ -506,6 +507,7 @@ def extract_commit_features(repo_path, repo_name, log_func, tracker=None, status
             
             if now - last_ui_update > 0.1 or total_commits == total_expected_commits or warning:
                 last_ui_update = now
+                from progress_tracker import render_pipeline_ui, render_commit_progress_ui, format_duration
                 status_slot.markdown(render_pipeline_ui(tracker, warning), unsafe_allow_html=True)
                 if prog_bar:
                     prog_bar.progress(tracker.get_overall_progress())
@@ -525,6 +527,7 @@ def extract_commit_features(repo_path, repo_name, log_func, tracker=None, status
         tracker.complete_stage(2)
         tracker.start_stage(3)
         if status_slot:
+            from progress_tracker import render_pipeline_ui
             status_slot.markdown(render_pipeline_ui(tracker), unsafe_allow_html=True)
             if prog_bar:
                 prog_bar.progress(tracker.get_overall_progress())
@@ -533,9 +536,24 @@ def extract_commit_features(repo_path, repo_name, log_func, tracker=None, status
     now_dt = datetime.now(timezone.utc)
     if commit_dates:
         commit_dates_sorted = sorted(commit_dates)
-        repo_age_days   = max(1, (commit_dates_sorted[-1] - commit_dates_sorted[0]).days)
+        shallow_span_days = max(1, (commit_dates_sorted[-1] - commit_dates_sorted[0]).days)
     else:
-        repo_age_days   = 1
+        shallow_span_days = 1
+
+    # Extract dynamic scaling factors based on API prediction vs actual shallow counts
+    if not stats:
+        stats = {
+            "age_days": shallow_span_days,
+            "est_commits": total_commits,
+            "est_contributors": len(author_commits)
+        }
+        
+    actual_age_days = stats.get("age_days", shallow_span_days)
+    est_commits_total = max(total_commits, stats.get("est_commits", total_commits))
+    est_contributors_total = max(len(author_commits), stats.get("est_contributors", len(author_commits)))
+    
+    commit_scale = est_commits_total / total_commits if total_commits > 0 else 1.0
+    contrib_scale = est_contributors_total / len(author_commits) if len(author_commits) > 0 else 1.0
 
     total_repo_commits = sum(author_commits.values())
     if total_repo_commits > 0:
@@ -557,10 +575,14 @@ def extract_commit_features(repo_path, repo_name, log_func, tracker=None, status
         repo_bus_factor     = 1
         repo_entropy        = 0.0
 
+    # Scale the bus factor and contributor counts over repo-level estimates
+    scaled_bus_factor = max(1, min(est_contributors_total, int(repo_bus_factor * contrib_scale)))
+
     if tracker:
         tracker.complete_stage(3)
         tracker.start_stage(4)
         if status_slot:
+            from progress_tracker import render_pipeline_ui
             status_slot.markdown(render_pipeline_ui(tracker), unsafe_allow_html=True)
             if prog_bar:
                 prog_bar.progress(tracker.get_overall_progress())
@@ -577,15 +599,24 @@ def extract_commit_features(repo_path, repo_name, log_func, tracker=None, status
     for idx, fpath in enumerate(file_list):
         current_file_idx = idx + 1
         dates = sorted(file_dates.get(fpath, []))
-        commit_count      = len(file_commits[fpath])
-        modification_count= commit_count
-        contributor_count = len(file_authors[fpath])
-        commit_frequency  = commit_count / repo_age_days
+        
+        # Raw shallow values
+        commit_count_shallow = len(file_commits[fpath])
+        contributor_count_shallow = len(file_authors[fpath])
+        
+        # Scale parameters to reflect full-repo values under shallow clone mapping
+        commit_count = max(1, int(commit_count_shallow * commit_scale))
+        modification_count = commit_count
+        contributor_count = max(1, min(est_contributors_total, int(contributor_count_shallow * contrib_scale)))
+        
+        # Calculate rate of changes per day relative to the shallow span
+        commit_frequency = commit_count_shallow / shallow_span_days
 
         recent_churn = 0
         if dates:
             total_churn = file_added[fpath] + file_deleted[fpath]
-            recent_churn = round(total_churn * min(1.0, RECENT_WINDOW_DAYS / max(1, repo_age_days)), 2)
+            # Churn inside the last 90 days is already fully accurate
+            recent_churn = round(total_churn * min(1.0, RECENT_WINDOW_DAYS / max(1, shallow_span_days)), 2)
 
         total_churn_f = file_added[fpath] + file_deleted[fpath]
         if dates and total_churn_f > 0:
@@ -605,7 +636,7 @@ def extract_commit_features(repo_path, repo_name, log_func, tracker=None, status
             ownership_conc = 1.0 / contributor_count
             shares_f = np.ones(contributor_count) / contributor_count
             contributor_ent = float(scipy_entropy(shares_f, base=2))
-            bus_f = min(contributor_count, repo_bus_factor)
+            bus_f = min(contributor_count, scaled_bus_factor)
 
         has_bug_fix_history = 0
         time_since_last_bug_fix = np.nan
@@ -616,7 +647,7 @@ def extract_commit_features(repo_path, repo_name, log_func, tracker=None, status
             "modification_count":     modification_count,
             "contributor_count":      contributor_count,
             "commit_frequency":       round(commit_frequency, 6),
-            "repository_age_days":    repo_age_days,
+            "repository_age_days":    actual_age_days,
             "ownership_concentration":round(ownership_conc, 6),
             "contributor_entropy":    round(contributor_ent, 6),
             "bus_factor":             bus_f,
@@ -631,16 +662,17 @@ def extract_commit_features(repo_path, repo_name, log_func, tracker=None, status
             now = time.time()
             if now - last_ui_update > 0.1 or current_file_idx == total_files:
                 last_ui_update = now
+                from progress_tracker import render_pipeline_ui
                 status_slot.markdown(render_pipeline_ui(tracker), unsafe_allow_html=True)
                 if prog_bar:
                     prog_bar.progress(tracker.get_overall_progress())
 
     commit_df = pd.DataFrame(per_file_rows)
     meta = {
-        "total_commits":      total_commits,
-        "repo_age_days":      repo_age_days,
-        "contributor_count":  len(author_commits),
-        "bus_factor":         repo_bus_factor,
+        "total_commits":      est_commits_total,
+        "repo_age_days":      actual_age_days,
+        "contributor_count":  est_contributors_total,
+        "bus_factor":         scaled_bus_factor,
         "ownership_conc":     repo_ownership_conc,
         "entropy":            repo_entropy,
     }
@@ -738,7 +770,7 @@ def run_inference(df, preprocessor, model):
 # ══════════════════════════════════════════════════════════════════════════════
 # MAIN PIPELINE EXECUTION
 # ══════════════════════════════════════════════════════════════════════════════
-def run_pipeline(owner: str, repo_name: str, tracker: PipelineTracker, status_slot, sub_slot, prog_bar, log_box) -> Optional[dict]:
+def run_pipeline(owner: str, repo_name: str, tracker: PipelineTracker, status_slot, sub_slot, prog_bar, log_box, stats=None) -> Optional[dict]:
     REPO_LOCAL = os.path.join(EXT_DIR, repo_name)
     os.makedirs(EXT_DIR, exist_ok=True)
 
@@ -821,7 +853,7 @@ def run_pipeline(owner: str, repo_name: str, tracker: PipelineTracker, status_sl
 
     # ── STEP 2: Commits (Stages 2, 3, 4) ──────────────────────────────────
     try:
-        commit_df, meta = extract_commit_features(REPO_LOCAL, repo_name, log, tracker, status_slot, sub_slot, prog_bar)
+        commit_df, meta = extract_commit_features(REPO_LOCAL, repo_name, log, tracker, status_slot, sub_slot, prog_bar, stats)
     except Exception as e:
         log(f"⚠️ Commit analysis failed: {e}. Proceeding with default features...", "info")
         commit_df = None
@@ -1553,7 +1585,7 @@ def main():
             tracker = PipelineTracker(est_runtime)
             
             # Execute pipeline
-            res = run_pipeline(owner, repo_name, tracker, status_slot, sub_slot, prog, log_box)
+            res = run_pipeline(owner, repo_name, tracker, status_slot, sub_slot, prog, log_box, stats)
             
             if res is not None:
                 prog.progress(1.0)
