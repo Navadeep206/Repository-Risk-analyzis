@@ -1,0 +1,10 @@
+external_repo,rank,similar_training_repo,cosine_similarity
+flask,1,prefect,0.9997
+flask,2,databases,0.9996
+flask,3,click,0.9994
+streamlit,1,ray,0.9963
+streamlit,2,pytorch,0.9754
+streamlit,3,lodash,0.3546
+cal.com,1,lodash,0.8338
+cal.com,2,prefect,0.8128
+cal.com,3,databases,0.8021
