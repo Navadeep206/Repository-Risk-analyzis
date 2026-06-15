@@ -17,7 +17,7 @@ import warnings
 import pickle
 import re
 import math
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 
 import numpy as np
@@ -34,6 +34,8 @@ sys.path.insert(0, BASE)
 sys.path.insert(0, os.path.join(BASE, "src"))
 
 from pdf_generator import generate_pdf_report
+from progress_tracker import PipelineTracker, GitCloneParser, render_pipeline_ui, format_duration, render_git_progress_ui, render_commit_progress_ui, render_file_progress_ui
+from runtime_estimator import fetch_github_metadata, estimate_repository_stats, predict_analysis_runtime, save_run_history
 
 # ── page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -380,13 +382,42 @@ def analyze_js_ts_file(path):
     except Exception:
         return 0, 1, 50.0
 
-def extract_quality_metrics(repo_path, repo_name, log_func):
+def extract_quality_metrics(repo_path, repo_name, log_func, tracker=None, status_slot=None, sub_slot=None, prog_bar=None):
     log_func("🔬 Extracting quality metrics...", "run")
     files_by_lang = get_source_files(repo_path)
+    total_files = sum(len(paths) for paths in files_by_lang.values())
+    if total_files == 0:
+        return pd.DataFrame()
+
     rows = []
+    current_file_idx = 0
+    last_ui_update = 0.0
     for lang, paths in files_by_lang.items():
         for path in paths:
+            current_file_idx += 1
             rel = os.path.relpath(path, repo_path)
+            
+            if tracker and status_slot and sub_slot:
+                prog_frac = current_file_idx / total_files
+                tracker.update_stage_progress(5, prog_frac)
+                
+                now = time.time()
+                warning = "Analysis appears slower than expected." if tracker.check_stall() else None
+                
+                if now - last_ui_update > 0.1 or current_file_idx == total_files or warning:
+                    last_ui_update = now
+                    status_slot.markdown(render_pipeline_ui(tracker, warning), unsafe_allow_html=True)
+                    if prog_bar:
+                        prog_bar.progress(tracker.get_overall_progress())
+                    
+                    start_time = tracker.stage_start_times[5]
+                    elapsed = now - start_time if start_time else 0.01
+                    speed = current_file_idx / elapsed if elapsed > 0 else 0.0
+                    remaining_sec = (total_files - current_file_idx) / speed if speed > 0 else 0.0
+                    rem_str = format_duration(remaining_sec)
+                    
+                    sub_slot.markdown(render_file_progress_ui(current_file_idx, total_files, rel, speed, rem_str), unsafe_allow_html=True)
+            
             if lang == "python":
                 loc, cc, mi = analyze_python_file(path)
             else:
@@ -398,9 +429,25 @@ def extract_quality_metrics(repo_path, repo_name, log_func):
     log_func(f"✅ Extracted metrics for {len(df):,} source files {langs_found}", "ok")
     return df
 
-def extract_commit_features(repo_path, repo_name, log_func):
+def extract_commit_features(repo_path, repo_name, log_func, tracker=None, status_slot=None, sub_slot=None, prog_bar=None):
     log_func("📝 Analyzing git commit logs (pydriller)...", "run")
     from pydriller import Repository
+    import subprocess
+    
+    # Pre-calculate actual commits available in local repo clone using rev-list
+    total_expected_commits = 200  # Default depth-200 clone cap fallback
+    try:
+        res = subprocess.run(
+            ["git", "-C", repo_path, "rev-list", "--count", "HEAD"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=5
+        )
+        if res.returncode == 0:
+            total_expected_commits = max(1, int(res.stdout.strip()))
+    except Exception:
+        pass
 
     file_commits    = defaultdict(set)
     file_authors    = defaultdict(set)
@@ -412,6 +459,15 @@ def extract_commit_features(repo_path, repo_name, log_func):
 
     SUPPORTED_EXT = {".py", ".js", ".jsx", ".ts", ".tsx"}
     total_commits = 0
+    
+    if tracker:
+        tracker.start_stage(2)
+        if status_slot:
+            status_slot.markdown(render_pipeline_ui(tracker), unsafe_allow_html=True)
+            if prog_bar:
+                prog_bar.progress(tracker.get_overall_progress())
+            
+    last_ui_update = 0.0
 
     for commit in Repository(repo_path).traverse_commits():
         total_commits += 1
@@ -440,13 +496,41 @@ def extract_commit_features(repo_path, repo_name, log_func):
         except Exception:
             continue
 
-        if total_commits % 200 == 0:
+        # Real-time dashboard updates (throttled at 10Hz)
+        if tracker and status_slot and sub_slot:
+            prog_frac = min(1.0, total_commits / total_expected_commits)
+            tracker.update_stage_progress(2, prog_frac)
+            
+            now = time.time()
+            warning = "Analysis appears slower than expected." if tracker.check_stall() else None
+            
+            if now - last_ui_update > 0.1 or total_commits == total_expected_commits or warning:
+                last_ui_update = now
+                status_slot.markdown(render_pipeline_ui(tracker, warning), unsafe_allow_html=True)
+                if prog_bar:
+                    prog_bar.progress(tracker.get_overall_progress())
+                
+                start_time = tracker.stage_start_times[2]
+                elapsed = now - start_time if start_time else 0.01
+                speed = total_commits / elapsed if elapsed > 0 else 0.0
+                remaining_sec = (total_expected_commits - total_commits) / speed if speed > 0 else 0.0
+                rem_str = format_duration(remaining_sec)
+                
+                sub_slot.markdown(render_commit_progress_ui(total_commits, total_expected_commits, int(prog_frac*100), speed, rem_str), unsafe_allow_html=True)
+        elif total_commits % 200 == 0:
             log_func(f"  Processed {total_commits} commits...", "info")
 
     log_func(f"✅ Commit log analysis complete. Total commits: {total_commits}", "ok")
+    if tracker:
+        tracker.complete_stage(2)
+        tracker.start_stage(3)
+        if status_slot:
+            status_slot.markdown(render_pipeline_ui(tracker), unsafe_allow_html=True)
+            if prog_bar:
+                prog_bar.progress(tracker.get_overall_progress())
 
-    # Repo-level stats
-    now = datetime.now(timezone.utc)
+    # Repo-level stats (Stage 3: Mine Contributors)
+    now_dt = datetime.now(timezone.utc)
     if commit_dates:
         commit_dates_sorted = sorted(commit_dates)
         repo_age_days   = max(1, (commit_dates_sorted[-1] - commit_dates_sorted[0]).days)
@@ -473,12 +557,25 @@ def extract_commit_features(repo_path, repo_name, log_func):
         repo_bus_factor     = 1
         repo_entropy        = 0.0
 
-    # Per-file features calculation
+    if tracker:
+        tracker.complete_stage(3)
+        tracker.start_stage(4)
+        if status_slot:
+            status_slot.markdown(render_pipeline_ui(tracker), unsafe_allow_html=True)
+            if prog_bar:
+                prog_bar.progress(tracker.get_overall_progress())
+
+    # Per-file features calculation (Stage 4: Mine File Modifications)
     RECENT_WINDOW_DAYS = 90
     DECAY_LAMBDA       = 0.01
 
     per_file_rows = []
-    for fpath in set(file_commits.keys()):
+    file_list = list(set(file_commits.keys()))
+    total_files = len(file_list)
+    last_ui_update = 0.0
+
+    for idx, fpath in enumerate(file_list):
+        current_file_idx = idx + 1
         dates = sorted(file_dates.get(fpath, []))
         commit_count      = len(file_commits[fpath])
         modification_count= commit_count
@@ -529,6 +626,15 @@ def extract_commit_features(repo_path, repo_name, log_func):
             "has_bug_fix_history":    has_bug_fix_history,
         })
 
+        if tracker and status_slot:
+            tracker.update_stage_progress(4, current_file_idx / total_files)
+            now = time.time()
+            if now - last_ui_update > 0.1 or current_file_idx == total_files:
+                last_ui_update = now
+                status_slot.markdown(render_pipeline_ui(tracker), unsafe_allow_html=True)
+                if prog_bar:
+                    prog_bar.progress(tracker.get_overall_progress())
+
     commit_df = pd.DataFrame(per_file_rows)
     meta = {
         "total_commits":      total_commits,
@@ -538,6 +644,14 @@ def extract_commit_features(repo_path, repo_name, log_func):
         "ownership_conc":     repo_ownership_conc,
         "entropy":            repo_entropy,
     }
+
+    if tracker:
+        tracker.complete_stage(4)
+        if status_slot:
+            status_slot.markdown(render_pipeline_ui(tracker), unsafe_allow_html=True)
+            if prog_bar:
+                prog_bar.progress(tracker.get_overall_progress())
+
     return commit_df, meta
 
 def build_feature_matrix(quality_df, commit_df, repo_name):
@@ -624,7 +738,7 @@ def run_inference(df, preprocessor, model):
 # ══════════════════════════════════════════════════════════════════════════════
 # MAIN PIPELINE EXECUTION
 # ══════════════════════════════════════════════════════════════════════════════
-def run_pipeline(owner: str, repo_name: str, log_box) -> Optional[dict]:
+def run_pipeline(owner: str, repo_name: str, tracker: PipelineTracker, status_slot, sub_slot, prog_bar, log_box) -> Optional[dict]:
     REPO_LOCAL = os.path.join(EXT_DIR, repo_name)
     os.makedirs(EXT_DIR, exist_ok=True)
 
@@ -638,52 +752,141 @@ def run_pipeline(owner: str, repo_name: str, log_box) -> Optional[dict]:
             unsafe_allow_html=True
         )
 
-    # ── STEP 1: Clone ─────────────────────────────────────────────────────
+    # ── STEP 1: Clone (Stage 1) ───────────────────────────────────────────
+    tracker.start_stage(1)
     log(f"🔗 Cloning {owner}/{repo_name} (depth={CLONE_DEPTH})…")
     try:
         if not os.path.isdir(os.path.join(REPO_LOCAL, ".git")):
-            from git import Repo
-            Repo.clone_from(
-                f"https://github.com/{owner}/{repo_name}",
-                REPO_LOCAL,
-                depth=CLONE_DEPTH,
-                single_branch=True
+            import subprocess
+            
+            cmd = [
+                "git", "clone", "--progress", 
+                "--depth", str(CLONE_DEPTH), 
+                "--single-branch", 
+                f"https://github.com/{owner}/{repo_name}", 
+                REPO_LOCAL
+            ]
+            
+            env = os.environ.copy()
+            env["GIT_TERMINAL_PROMPT"] = "0"
+            
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+                env=env
             )
+            
+            clone_parser = GitCloneParser()
+            
+            while True:
+                line = process.stderr.readline()
+                if not line and process.poll() is not None:
+                    break
+                if line:
+                    changed = clone_parser.parse_line(line)
+                    if changed:
+                        tracker.update_stage_progress(1, clone_parser.percent / 100.0)
+                        warning_msg = "Analysis appears slower than expected." if tracker.check_stall() else None
+                        status_slot.markdown(render_pipeline_ui(tracker, warning_msg), unsafe_allow_html=True)
+                        sub_slot.markdown(render_git_progress_ui(clone_parser), unsafe_allow_html=True)
+                        if prog_bar:
+                            prog_bar.progress(tracker.get_overall_progress())
+            
+            rc = process.poll()
+            if rc != 0:
+                err_text = process.stderr.read()
+                raise RuntimeError(f"git clone returned code {rc}. Stderr: {err_text}")
+                
             log(f"✅ Repository cloned successfully", "ok")
+            tracker.complete_stage(1)
+            status_slot.markdown(render_pipeline_ui(tracker), unsafe_allow_html=True)
+            if prog_bar:
+                prog_bar.progress(tracker.get_overall_progress())
         else:
             log(f"✓ Repository already exists locally — skipping clone", "ok")
+            tracker.complete_stage(1)
+            status_slot.markdown(render_pipeline_ui(tracker), unsafe_allow_html=True)
+            if prog_bar:
+                prog_bar.progress(tracker.get_overall_progress())
     except Exception as e:
         log(f"❌ Clone failed: {e}", "err")
+        tracker.fail_stage(1)
+        status_slot.markdown(render_pipeline_ui(tracker), unsafe_allow_html=True)
+        if prog_bar:
+            prog_bar.progress(tracker.get_overall_progress())
         return None
 
-    # ── STEP 2: Metrics ───────────────────────────────────────────────────
+    # ── STEP 2: Commits (Stages 2, 3, 4) ──────────────────────────────────
     try:
-        quality_df = extract_quality_metrics(REPO_LOCAL, repo_name, log)
-        if len(quality_df) == 0:
-            log("❌ No source files found for analysis", "err")
-            return None
-    except Exception as e:
-        log(f"❌ Metrics extraction failed: {e}", "err")
-        return None
-
-    # ── STEP 3: Commits ───────────────────────────────────────────────────
-    try:
-        commit_df, meta = extract_commit_features(REPO_LOCAL, repo_name, log)
+        commit_df, meta = extract_commit_features(REPO_LOCAL, repo_name, log, tracker, status_slot, sub_slot, prog_bar)
     except Exception as e:
         log(f"⚠️ Commit analysis failed: {e}. Proceeding with default features...", "info")
         commit_df = None
         meta = {"total_commits": 0, "repo_age_days": 1, "contributor_count": 1, "bus_factor": 1, "ownership_conc": 1.0, "entropy": 0.0}
+        if tracker:
+            tracker.fail_stage(2)
+            tracker.fail_stage(3)
+            tracker.fail_stage(4)
+            if prog_bar:
+                prog_bar.progress(tracker.get_overall_progress())
 
-    # ── STEP 4: Feature Matrix ────────────────────────────────────────────
+    # ── STEP 3: Metrics (Stage 5) ─────────────────────────────────────────
+    try:
+        tracker.start_stage(5)
+        status_slot.markdown(render_pipeline_ui(tracker), unsafe_allow_html=True)
+        if prog_bar:
+            prog_bar.progress(tracker.get_overall_progress())
+        
+        quality_df = extract_quality_metrics(REPO_LOCAL, repo_name, log, tracker, status_slot, sub_slot, prog_bar)
+        if len(quality_df) == 0:
+            log("❌ No source files found for analysis", "err")
+            tracker.fail_stage(5)
+            if prog_bar:
+                prog_bar.progress(tracker.get_overall_progress())
+            return None
+            
+        tracker.complete_stage(5)
+        status_slot.markdown(render_pipeline_ui(tracker), unsafe_allow_html=True)
+        if prog_bar:
+            prog_bar.progress(tracker.get_overall_progress())
+    except Exception as e:
+        log(f"❌ Metrics extraction failed: {e}", "err")
+        tracker.fail_stage(5)
+        if prog_bar:
+            prog_bar.progress(tracker.get_overall_progress())
+        return None
+
+    # Clean up sub-slots (since file/commit details are done)
+    sub_slot.empty()
+
+    # ── STEP 4: Feature Matrix (Stage 6) ──────────────────────────────────
+    tracker.start_stage(6)
+    status_slot.markdown(render_pipeline_ui(tracker), unsafe_allow_html=True)
+    if prog_bar:
+        prog_bar.progress(tracker.get_overall_progress())
     log("⚙️ Engineering feature matrix...", "run")
     try:
         feat_df = build_feature_matrix(quality_df, commit_df, repo_name)
         log(f"✅ Engineered features for {len(feat_df):,} files", "ok")
+        tracker.complete_stage(6)
+        status_slot.markdown(render_pipeline_ui(tracker), unsafe_allow_html=True)
+        if prog_bar:
+            prog_bar.progress(tracker.get_overall_progress())
     except Exception as e:
         log(f"❌ Feature matrix builder failed: {e}", "err")
+        tracker.fail_stage(6)
+        if prog_bar:
+            prog_bar.progress(tracker.get_overall_progress())
         return None
 
-    # ── STEP 5: ML Inference ──────────────────────────────────────────────
+    # ── STEP 5: ML Inference (Stage 7) ────────────────────────────────────
+    tracker.start_stage(7)
+    status_slot.markdown(render_pipeline_ui(tracker), unsafe_allow_html=True)
+    if prog_bar:
+        prog_bar.progress(tracker.get_overall_progress())
     log("🤖 Loading production XGBoost (V3) artifacts...", "run")
     try:
         with open(os.path.join(MODELS_DIR, "best_model_v3.pkl"), "rb") as f:
@@ -697,10 +900,39 @@ def run_pipeline(owner: str, repo_name: str, log_box) -> Optional[dict]:
         log("🔮 Generating predictions...", "run")
         result_df = run_inference(feat_df, preprocessor, model)
         log("🏆 Risk prediction complete!", "ok")
+        tracker.complete_stage(7)
+        status_slot.markdown(render_pipeline_ui(tracker), unsafe_allow_html=True)
+        if prog_bar:
+            prog_bar.progress(tracker.get_overall_progress())
     except Exception as e:
         log(f"❌ ML Inference failed: {e}", "err")
         traceback.print_exc()
+        tracker.fail_stage(7)
+        if prog_bar:
+            prog_bar.progress(tracker.get_overall_progress())
         return None
+
+    # ── STEP 6: Generate Report (Stage 8) ──────────────────────────────────
+    tracker.start_stage(8)
+    status_slot.markdown(render_pipeline_ui(tracker), unsafe_allow_html=True)
+    if prog_bar:
+        prog_bar.progress(tracker.get_overall_progress())
+    log("📄 Report generation preparation...", "run")
+    
+    tracker.complete_stage(8)
+    status_slot.markdown(render_pipeline_ui(tracker), unsafe_allow_html=True)
+    if prog_bar:
+        prog_bar.progress(tracker.get_overall_progress())
+    
+    # Save successful run history
+    try:
+        actual_files = len(quality_df)
+        actual_commits = meta.get("total_commits", 0)
+        actual_contributors = meta.get("contributor_count", 0)
+        elapsed_sec = time.time() - tracker.start_time
+        save_run_history(repo_name, actual_files, actual_commits, actual_contributors, elapsed_sec)
+    except Exception as db_err:
+        log(f"⚠️ Failed to save run history: {db_err}", "info")
 
     return {"df": result_df, "meta": meta}
 
@@ -1257,44 +1489,81 @@ def main():
             st.session_state.analysis_repo = repo_name
 
             # Run pipeline
+            # 1. Fetch metadata and estimate stats
+            meta_api = fetch_github_metadata(owner, repo_name)
+            stats = estimate_repository_stats(meta_api)
+            lang_display = stats["language"].capitalize()
+            
+            # 2. Predict analysis runtime
+            est_runtime = predict_analysis_runtime(stats["est_files"], stats["est_commits"], stats["est_contributors"])
+            est_dur_str = format_duration(est_runtime)
+            
+            # Format completion time
+            comp_dt = datetime.now() + timedelta(seconds=est_runtime)
+            comp_time_str = comp_dt.strftime("%I:%M %p")
+            
+            # Render Repository Overview Card
             st.markdown(f"""
-            <div style="background:#111318;border:1px solid #1e293b;border-radius:12px;padding:1.25rem 1.5rem;margin-top:1.5rem;">
-              <div style="font-weight:700;color:#f8fafc;margin-bottom:0.75rem;">
-                ⚙️ Executing pipeline for <span style="color:#6366f1;">{owner}/{repo_name}</span>
+            <div style="background:#111318; border:1px solid #1e293b; border-radius:16px; padding:1.5rem; margin-top:1.5rem; margin-bottom:1.5rem; box-shadow:0 4px 20px rgba(0,0,0,0.25);">
+              <div style="font-size:0.75rem; font-weight:700; color:#6366f1; text-transform:uppercase; letter-spacing:0.1em; margin-bottom:1rem;">
+                📊 Repository Overview & Runtime Prediction
               </div>
+              <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(130px, 1fr)); gap:1rem; margin-bottom:1.2rem;">
+                <div>
+                  <div style="font-size:0.72rem; color:#64748b; text-transform:uppercase; letter-spacing:0.05em;">Repository</div>
+                  <div style="font-size:1.05rem; font-weight:700; color:#f8fafc; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{repo_name}</div>
+                </div>
+                <div>
+                  <div style="font-size:0.72rem; color:#64748b; text-transform:uppercase; letter-spacing:0.05em;">Language</div>
+                  <div style="font-size:1.05rem; font-weight:700; color:#f8fafc;">{lang_display}</div>
+                </div>
+                <div>
+                  <div style="font-size:0.72rem; color:#64748b; text-transform:uppercase; letter-spacing:0.05em;">Estimated Files</div>
+                  <div style="font-size:1.05rem; font-weight:700; color:#f8fafc;">{stats["est_files"]:,}</div>
+                </div>
+                <div>
+                  <div style="font-size:0.72rem; color:#64748b; text-transform:uppercase; letter-spacing:0.05em;">Estimated Commits</div>
+                  <div style="font-size:1.05rem; font-weight:700; color:#f8fafc;">{stats["est_commits"]:,}</div>
+                </div>
+                <div>
+                  <div style="font-size:0.72rem; color:#64748b; text-transform:uppercase; letter-spacing:0.05em;">Contributors</div>
+                  <div style="font-size:1.05rem; font-weight:700; color:#f8fafc;">{stats["est_contributors"]:,}</div>
+                </div>
+              </div>
+              <hr style="border-color:#1e293b; margin:1rem 0;">
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:1.5rem;">
+                <div>
+                  <div style="font-size:0.72rem; color:#64748b; text-transform:uppercase; letter-spacing:0.05em;">Estimated Analysis Time</div>
+                  <div style="font-size:1.5rem; font-weight:800; color:#60a5fa; margin-top:0.2rem;">{est_dur_str}</div>
+                </div>
+                <div>
+                  <div style="font-size:0.72rem; color:#64748b; text-transform:uppercase; letter-spacing:0.05em;">Estimated Completion Time</div>
+                  <div style="font-size:1.5rem; font-weight:800; color:#4ade80; margin-top:0.2rem;">{comp_time_str}</div>
+                </div>
+              </div>
+            </div>
             """, unsafe_allow_html=True)
-
-            prog = st.progress(0)
-            status = st.empty()
+            
+            prog = st.progress(0.0)
+            status_slot = st.empty()
+            sub_slot = st.empty()
             log_box = st.empty()
-
-            stages = [
-                "Cloning repository...",
-                "Running Quality extraction...",
-                "Running Commit features analysis...",
-                "Engineering feature matrix...",
-                "Loading production model...",
-                "Generating predictions...",
-                "Finalizing summary..."
-            ]
-
-            for i, s in enumerate(stages):
-                status.markdown(f'<div style="font-size:0.85rem;color:#94a3b8;">{s}</div>', unsafe_allow_html=True)
-                prog.progress((i+1) / len(stages) * 0.9)
-                if i == 0: break
-                
-            res = run_pipeline(owner, repo_name, log_box)
-            prog.progress(1.0)
-            status.empty()
-
-            st.markdown("</div>", unsafe_allow_html=True)
-
-            if res is None:
+            
+            # Initialize progress tracker
+            tracker = PipelineTracker(est_runtime)
+            
+            # Execute pipeline
+            res = run_pipeline(owner, repo_name, tracker, status_slot, sub_slot, prog, log_box)
+            
+            if res is not None:
+                prog.progress(1.0)
+                status_slot.empty()
+                sub_slot.empty()
+                st.session_state.analysis_res = res
+                st.rerun()
+            else:
                 st.error("Pipeline run failed. Please check logs.")
                 return
-                
-            st.session_state.analysis_res = res
-            st.rerun()
 
     else:
         # Results View
